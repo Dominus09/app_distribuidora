@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
+import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
@@ -12,20 +13,22 @@ class VisitaCard extends StatelessWidget {
   const VisitaCard({
     super.key,
     required this.visita,
-    required this.isOnline,
+    required this.attemptRemoteSave,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
+    required this.apiService,
     required this.onVisitadoPressed,
     required this.onIncidenciaPressed,
     required this.onTapDetalle,
   });
 
   final Visita visita;
-  final bool isOnline;
+  final bool attemptRemoteSave;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
+  final ApiService apiService;
   final ValueChanged<Visita> onVisitadoPressed;
   final ValueChanged<Visita> onIncidenciaPressed;
   final VoidCallback onTapDetalle;
@@ -39,7 +42,8 @@ class VisitaCard extends StatelessWidget {
     final result = await showVisitadoFlowSheet(
       context: context,
       visita: visita,
-      isOnline: isOnline,
+      attemptRemoteSave: attemptRemoteSave,
+      apiService: apiService,
       locationService: locationService,
       vendedorService: vendedorService,
       syncService: syncService,
@@ -51,7 +55,8 @@ class VisitaCard extends StatelessWidget {
     final result = await showIncidenciaFlowSheet(
       context: context,
       visita: visita,
-      isOnline: isOnline,
+      attemptRemoteSave: attemptRemoteSave,
+      apiService: apiService,
       locationService: locationService,
       vendedorService: vendedorService,
       syncService: syncService,

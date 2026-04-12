@@ -1,4 +1,5 @@
-// Modelo de dominio de una parada de ruta (mock, sin API).
+// Modelo de dominio de una parada de ruta (API + almacenamiento local).
+// Contrato alineado con OpenAPI: VisitaCreate, VisitaResponse (Quillotana Analytics API).
 
 /// Estado operativo de la visita en terreno.
 enum VisitaEstado {
@@ -7,7 +8,7 @@ enum VisitaEstado {
   incidencia,
 }
 
-/// Resultado de la validación por georreferencia (mock GPS / distancia).
+/// Resultado de la validación por georreferencia.
 enum ValidacionEstado {
   validado,
   fueraRango,
@@ -16,7 +17,7 @@ enum ValidacionEstado {
   offline,
 }
 
-/// Sincronización con backend (simulado).
+/// Sincronización con backend.
 enum SyncStatus {
   synced,
   pendingSync,
@@ -38,11 +39,17 @@ extension VisitaEstadoUi on VisitaEstado {
         VisitaEstado.incidencia => 'Incidencia',
       };
 
-  /// Color de semáforo en listas y tarjetas.
   int get toneColorValue => switch (this) {
         VisitaEstado.pendiente => 0xFFF9A825,
         VisitaEstado.visitado => 0xFF2E7D32,
         VisitaEstado.incidencia => 0xFFC62828,
+      };
+
+  /// Valores del enum en FastAPI (`VisitaCreate` / `VisitaResponse`).
+  String get apiValue => switch (this) {
+        VisitaEstado.pendiente => 'pendiente',
+        VisitaEstado.visitado => 'visitado',
+        VisitaEstado.incidencia => 'incidencia',
       };
 }
 
@@ -54,12 +61,25 @@ extension ValidacionEstadoUi on ValidacionEstado {
         ValidacionEstado.pendienteValidacion => 'Pendiente de validación',
         ValidacionEstado.offline => 'Sin conexión',
       };
+
+  String get apiValue => switch (this) {
+        ValidacionEstado.validado => 'validado',
+        ValidacionEstado.fueraRango => 'fuera_rango',
+        ValidacionEstado.sinGps => 'sin_gps',
+        ValidacionEstado.pendienteValidacion => 'pendiente_validacion',
+        ValidacionEstado.offline => 'offline',
+      };
 }
 
 extension SyncStatusUi on SyncStatus {
   String get label => switch (this) {
         SyncStatus.synced => 'Sincronizado',
         SyncStatus.pendingSync => 'Pendiente de envío',
+      };
+
+  String get apiValue => switch (this) {
+        SyncStatus.synced => 'synced',
+        SyncStatus.pendingSync => 'pending_sync',
       };
 }
 
@@ -71,11 +91,22 @@ extension TipoIncidenciaUi on TipoIncidencia {
         TipoIncidencia.fueraDeRuta => 'Fuera de ruta',
         TipoIncidencia.otros => 'Otros',
       };
+
+  /// FastAPI enum en `VisitaCreate`: textos con espacio, no snake_case.
+  String get apiValue => switch (this) {
+        TipoIncidencia.localCerrado => 'local cerrado',
+        TipoIncidencia.sinStock => 'sin stock',
+        TipoIncidencia.noCompra => 'no compra',
+        TipoIncidencia.fueraDeRuta => 'fuera de ruta',
+        TipoIncidencia.otros => 'otros',
+      };
 }
 
 class Visita {
   const Visita({
     required this.id,
+    this.rutaId,
+    this.clienteId,
     required this.clienteNombre,
     required this.direccion,
     required this.orden,
@@ -95,7 +126,12 @@ class Visita {
     this.localActionId,
   });
 
+  /// Identificador de fila (`VisitaResponse.id` int en API → string en app).
   final String id;
+  /// Ruta del día (`VisitaCreate.ruta_id` / `VisitaResponse.ruta_id`).
+  final int? rutaId;
+  /// Identificador de cliente en ERP (`VisitaCreate.cliente_id` es string en API).
+  final String? clienteId;
   final String clienteNombre;
   final String direccion;
   final int orden;
@@ -110,12 +146,136 @@ class Visita {
   final DateTime? fechaHoraVisita;
   final double? distanciaMetros;
   final ValidacionEstado validacionEstado;
+  /// Evidencia local o URL remota; en POST se envía como `foto_url`.
   final String? fotoPath;
   final SyncStatus syncStatus;
   final String? localActionId;
 
+  /// True si se puede armar un `VisitaCreate` para POST /visitas o /visitas/sync.
+  bool get puedeEnviarseAlBackend =>
+      localActionId != null &&
+      localActionId!.isNotEmpty &&
+      rutaId != null &&
+      rutaId! >= 1 &&
+      orden >= 1;
+
+  factory Visita.fromJson(Map<String, dynamic> json) {
+    final idVal = json['id'];
+    final id = idVal == null ? '' : idVal.toString();
+
+    return Visita(
+      id: id,
+      rutaId: _parseInt(json['ruta_id']),
+      clienteId: _parseClienteId(json['cliente_id']),
+      clienteNombre: _parseClienteNombre(json),
+      direccion: _parseDireccion(json),
+      orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
+      estado: _parseEstado(_str(json, 'estado')),
+      latCliente: _parseCoord(json['lat_cliente']) ?? 0,
+      lonCliente: _parseCoord(json['lon_cliente']) ?? 0,
+      tipoIncidencia: _parseTipoIncidencia(_normTipoIncidenciaRaw(json)),
+      observacion: _str(json, 'observacion'),
+      conCompra: _parseBool(json['con_compra']),
+      latVisita: _parseCoord(json['lat_visita']),
+      lonVisita: _parseCoord(json['lon_visita']),
+      fechaHoraVisita: _parseDateTime(json['fecha_hora_visita']),
+      distanciaMetros: _parseCoord(json['distancia_metros']),
+      validacionEstado: _parseValidacion(_str(json, 'validacion_estado')),
+      fotoPath: _str(json, 'foto_url', 'foto_path'),
+      syncStatus: _parseSyncStatus(_str(json, 'sync_status')),
+      localActionId: _str(json, 'local_action_id'),
+    );
+  }
+
+  /// JSON completo para caché local (SharedPreferences). Incluye campos de UI.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      if (rutaId != null) 'ruta_id': rutaId,
+      if (clienteId != null) 'cliente_id': clienteId,
+      'cliente_nombre': clienteNombre,
+      'direccion': direccion,
+      'orden_ruta': orden,
+      'estado': estado.apiValue,
+      if (tipoIncidencia != null) 'tipo_incidencia': tipoIncidencia!.apiValue,
+      if (observacion != null) 'observacion': observacion,
+      if (conCompra != null) 'con_compra': conCompra,
+      'lat_cliente': latCliente,
+      'lon_cliente': lonCliente,
+      if (latVisita != null) 'lat_visita': latVisita,
+      if (lonVisita != null) 'lon_visita': lonVisita,
+      if (fechaHoraVisita != null)
+        'fecha_hora_visita': _fechaHoraParaJson(fechaHoraVisita!),
+      if (distanciaMetros != null) 'distancia_metros': distanciaMetros,
+      'validacion_estado': validacionEstado.apiValue,
+      if (fotoPath != null) 'foto_path': fotoPath,
+      'sync_status': syncStatus.apiValue,
+      if (localActionId != null) 'local_action_id': localActionId,
+    };
+  }
+
+  /// Cuerpo exacto de `VisitaCreate` (POST /visitas y elementos de /visitas/sync).
+  /// Lanza [StateError] si faltan campos obligatorios del contrato OpenAPI.
+  Map<String, dynamic> toJsonForApiCreate() {
+    final lid = localActionId;
+    final rid = rutaId;
+    if (lid == null || lid.isEmpty) {
+      throw StateError('Visita.toJsonForApiCreate: falta local_action_id');
+    }
+    if (rid == null || rid < 1) {
+      throw StateError('Visita.toJsonForApiCreate: falta ruta_id válido');
+    }
+    if (orden < 1) {
+      throw StateError('Visita.toJsonForApiCreate: orden_ruta debe ser >= 1');
+    }
+
+    final cid = (clienteId != null && clienteId!.trim().isNotEmpty)
+        ? clienteId!.trim()
+        : id.trim();
+    if (cid.isEmpty) {
+      throw StateError('Visita.toJsonForApiCreate: falta cliente_id');
+    }
+
+    final out = <String, dynamic>{
+      'local_action_id': lid,
+      'ruta_id': rid,
+      'cliente_id': cid,
+      'orden_ruta': orden,
+      'estado': estado.apiValue,
+      'sync_status': syncStatus.apiValue,
+      'lat_cliente': latCliente,
+      'lon_cliente': lonCliente,
+    };
+
+    if (tipoIncidencia != null) {
+      out['tipo_incidencia'] = tipoIncidencia!.apiValue;
+    }
+    if (observacion != null && observacion!.trim().isNotEmpty) {
+      out['observacion'] = observacion!.trim();
+    }
+    if (conCompra != null) {
+      out['con_compra'] = conCompra;
+    }
+    if (fotoPath != null && fotoPath!.trim().isNotEmpty) {
+      out['foto_url'] = fotoPath!.trim();
+    }
+    if (latVisita != null) {
+      out['lat_visita'] = latVisita;
+    }
+    if (lonVisita != null) {
+      out['lon_visita'] = lonVisita;
+    }
+    if (fechaHoraVisita != null) {
+      out['fecha_hora_visita'] = _fechaHoraParaJson(fechaHoraVisita!);
+    }
+
+    return out;
+  }
+
   Visita copyWith({
     String? id,
+    Object? rutaId = _sentinel,
+    Object? clienteId = _sentinel,
     String? clienteNombre,
     String? direccion,
     int? orden,
@@ -136,6 +296,10 @@ class Visita {
   }) {
     return Visita(
       id: id ?? this.id,
+      rutaId: rutaId == _sentinel ? this.rutaId : rutaId as int?,
+      clienteId: clienteId == _sentinel
+          ? this.clienteId
+          : clienteId as String?,
       clienteNombre: clienteNombre ?? this.clienteNombre,
       direccion: direccion ?? this.direccion,
       orden: orden ?? this.orden,
@@ -170,4 +334,138 @@ class Visita {
 
 class _Sentinel {
   const _Sentinel();
+}
+
+/// ISO 8601 en UTC (formato `date-time` de OpenAPI).
+String _fechaHoraParaJson(DateTime d) => d.toUtc().toIso8601String();
+
+String? _str(Map<String, dynamic> json, String snake, [String? camel]) {
+  final v = json[snake] ?? (camel != null ? json[camel] : null);
+  if (v == null) return null;
+  final s = v.toString();
+  return s.isEmpty ? null : s;
+}
+
+String? _normTipoIncidenciaRaw(Map<String, dynamic> json) {
+  final v = json['tipo_incidencia'];
+  if (v == null) return null;
+  return v.toString().trim().toLowerCase().replaceAll('_', ' ');
+}
+
+String _parseClienteNombre(Map<String, dynamic> json) {
+  for (final k in [
+    'cliente_nombre',
+    'nombre_cliente',
+    'nombre_fantasia',
+    'razon_social',
+    'nombre',
+  ]) {
+    final s = _str(json, k);
+    if (s != null && s.isNotEmpty) return s;
+  }
+  return '';
+}
+
+String _parseDireccion(Map<String, dynamic> json) {
+  for (final k in ['direccion', 'domicilio', 'direccion_cliente']) {
+    final s = _str(json, k);
+    if (s != null && s.isNotEmpty) return s;
+  }
+  return '';
+}
+
+String? _parseClienteId(dynamic v) {
+  if (v == null) return null;
+  final s = v.toString().trim();
+  return s.isEmpty ? null : s;
+}
+
+int? _parseInt(dynamic v) {
+  if (v == null) return null;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse(v.toString());
+}
+
+bool? _parseBool(dynamic v) {
+  if (v == null) return null;
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  final s = v.toString().toLowerCase();
+  if (s == 'true' || s == '1') return true;
+  if (s == 'false' || s == '0') return false;
+  return null;
+}
+
+/// Coordenadas y distancias: API puede devolver `number` o `string` decimal.
+double? _parseCoord(dynamic v) {
+  if (v == null) return null;
+  if (v is double) return v;
+  if (v is num) return v.toDouble();
+  final s = v.toString().trim();
+  if (s.isEmpty) return null;
+  return double.tryParse(s);
+}
+
+DateTime? _parseDateTime(dynamic v) {
+  if (v == null) return null;
+  if (v is DateTime) return v;
+  final s = v.toString().trim();
+  if (s.isEmpty) return null;
+  return DateTime.tryParse(s);
+}
+
+VisitaEstado _parseEstado(String? s) {
+  switch (s) {
+    case 'visitado':
+      return VisitaEstado.visitado;
+    case 'incidencia':
+      return VisitaEstado.incidencia;
+    default:
+      return VisitaEstado.pendiente;
+  }
+}
+
+ValidacionEstado _parseValidacion(String? s) {
+  switch (s) {
+    case 'fuera_rango':
+      return ValidacionEstado.fueraRango;
+    case 'sin_gps':
+      return ValidacionEstado.sinGps;
+    case 'pendiente_validacion':
+      return ValidacionEstado.pendienteValidacion;
+    case 'offline':
+      return ValidacionEstado.offline;
+    case 'validado':
+      return ValidacionEstado.validado;
+    default:
+      return ValidacionEstado.pendienteValidacion;
+  }
+}
+
+SyncStatus _parseSyncStatus(String? s) {
+  if (s == null || s.isEmpty) return SyncStatus.synced;
+  final n = s.trim().toLowerCase();
+  if (n == 'pending_sync' || n == 'pending sync') {
+    return SyncStatus.pendingSync;
+  }
+  return SyncStatus.synced;
+}
+
+TipoIncidencia? _parseTipoIncidencia(String? s) {
+  if (s == null || s.isEmpty) return null;
+  switch (s) {
+    case 'local cerrado':
+      return TipoIncidencia.localCerrado;
+    case 'sin stock':
+      return TipoIncidencia.sinStock;
+    case 'no compra':
+      return TipoIncidencia.noCompra;
+    case 'fuera de ruta':
+      return TipoIncidencia.fueraDeRuta;
+    case 'otros':
+      return TipoIncidencia.otros;
+    default:
+      return null;
+  }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
+import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
@@ -12,7 +13,8 @@ const double kMaxDistanceVisitadoMetros = 300;
 Future<Visita?> showVisitadoFlowSheet({
   required BuildContext context,
   required Visita visita,
-  required bool isOnline,
+  required bool attemptRemoteSave,
+  required ApiService apiService,
   required LocationService locationService,
   required VendedorService vendedorService,
   required SyncService syncService,
@@ -32,7 +34,8 @@ Future<Visita?> showVisitadoFlowSheet({
         ),
         child: _VisitadoSheetBody(
           visita: visita,
-          isOnline: isOnline,
+          attemptRemoteSave: attemptRemoteSave,
+          apiService: apiService,
           locationService: locationService,
           vendedorService: vendedorService,
           syncService: syncService,
@@ -45,14 +48,16 @@ Future<Visita?> showVisitadoFlowSheet({
 class _VisitadoSheetBody extends StatefulWidget {
   const _VisitadoSheetBody({
     required this.visita,
-    required this.isOnline,
+    required this.attemptRemoteSave,
+    required this.apiService,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
   });
 
   final Visita visita;
-  final bool isOnline;
+  final bool attemptRemoteSave;
+  final ApiService apiService;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
@@ -91,8 +96,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim();
       final ahora = DateTime.now();
 
-      // --- Sin conexión: siempre se permite guardar; queda pendiente de sync.
-      if (!widget.isOnline) {
+      // --- Sin intento remoto: siempre se permite guardar; queda pendiente de sync.
+      if (!widget.attemptRemoteSave) {
         if (!gpsOk) {
           _popResult(
             actionId,
@@ -155,7 +160,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         return;
       }
 
-      final actualizada = widget.visita.copyWith(
+      final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.visitado,
         conCompra: _conCompra,
         observacion: obs,
@@ -164,13 +169,27 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         fechaHoraVisita: ahora,
         distanciaMetros: d,
         validacionEstado: ValidacionEstado.validado,
-        syncStatus: SyncStatus.synced,
+        syncStatus: SyncStatus.pendingSync,
         tipoIncidencia: null,
         fotoPath: null,
         localActionId: actionId,
       );
-      widget.syncService.acknowledgeActionProcessed(actionId);
-      if (mounted) Navigator.of(context).pop(actualizada);
+
+      try {
+        final guardada = await widget.apiService.registrarVisita(paraEnviar);
+        if (!mounted) return;
+        widget.syncService.acknowledgeActionProcessed(actionId);
+        Navigator.of(context).pop(
+          guardada.copyWith(
+            syncStatus: SyncStatus.synced,
+            localActionId: actionId,
+          ),
+        );
+      } catch (_) {
+        if (!mounted) return;
+        _toast('Sin conexión, se guardará para sincronizar');
+        Navigator.of(context).pop(paraEnviar);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -217,7 +236,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final offline = !widget.isOnline;
+    final offline = !widget.attemptRemoteSave;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
@@ -294,7 +313,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
 Future<Visita?> showIncidenciaFlowSheet({
   required BuildContext context,
   required Visita visita,
-  required bool isOnline,
+  required bool attemptRemoteSave,
+  required ApiService apiService,
   required LocationService locationService,
   required VendedorService vendedorService,
   required SyncService syncService,
@@ -314,7 +334,8 @@ Future<Visita?> showIncidenciaFlowSheet({
         ),
         child: _IncidenciaSheetBody(
           visita: visita,
-          isOnline: isOnline,
+          attemptRemoteSave: attemptRemoteSave,
+          apiService: apiService,
           locationService: locationService,
           vendedorService: vendedorService,
           syncService: syncService,
@@ -327,14 +348,16 @@ Future<Visita?> showIncidenciaFlowSheet({
 class _IncidenciaSheetBody extends StatefulWidget {
   const _IncidenciaSheetBody({
     required this.visita,
-    required this.isOnline,
+    required this.attemptRemoteSave,
+    required this.apiService,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
   });
 
   final Visita visita;
-  final bool isOnline;
+  final bool attemptRemoteSave;
+  final ApiService apiService;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
@@ -387,16 +410,13 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
           ? widget.locationService.distanceToCliente(snap, widget.visita)
           : null;
 
-      final validacion = !widget.isOnline
+      final validacion = !widget.attemptRemoteSave
           ? ValidacionEstado.offline
           : (gpsOk && snap != null
               ? ValidacionEstado.validado
               : ValidacionEstado.sinGps);
 
-      final sync =
-          widget.isOnline ? SyncStatus.synced : SyncStatus.pendingSync;
-
-      final actualizada = widget.visita.copyWith(
+      final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.incidencia,
         tipoIncidencia: _tipo,
         observacion: obs,
@@ -407,14 +427,30 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
         distanciaMetros: metros,
         validacionEstado: validacion,
         fotoPath: _fotoPath,
-        syncStatus: sync,
+        syncStatus: SyncStatus.pendingSync,
         localActionId: actionId,
       );
 
-      if (sync == SyncStatus.synced) {
-        widget.syncService.acknowledgeActionProcessed(actionId);
+      if (!widget.attemptRemoteSave) {
+        if (mounted) Navigator.of(context).pop(paraEnviar);
+        return;
       }
-      if (mounted) Navigator.of(context).pop(actualizada);
+
+      try {
+        final guardada = await widget.apiService.registrarVisita(paraEnviar);
+        if (!mounted) return;
+        widget.syncService.acknowledgeActionProcessed(actionId);
+        Navigator.of(context).pop(
+          guardada.copyWith(
+            syncStatus: SyncStatus.synced,
+            localActionId: actionId,
+          ),
+        );
+      } catch (_) {
+        if (!mounted) return;
+        _toast('Sin conexión, se guardará para sincronizar');
+        Navigator.of(context).pop(paraEnviar);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -491,8 +527,8 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
           ),
           const SizedBox(height: 8),
           Text(
-            widget.isOnline
-                ? 'En línea: la incidencia se marca como sincronizada (mock).'
+            widget.attemptRemoteSave
+                ? 'En línea: se enviará al servidor al guardar.'
                 : 'Sin conexión: quedará pendiente de envío hasta la sincronización forzada.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,

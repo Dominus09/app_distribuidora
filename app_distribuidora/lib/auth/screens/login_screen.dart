@@ -42,7 +42,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       final Widget destination = switch (_role) {
-        UserRole.vendedor => const VendedorHomeScreen(),
+        UserRole.vendedor => VendedorHomeScreen(
+            vendedorCodigo: _usernameController.text.trim(),
+            vendedorNombre: _usernameController.text.trim(),
+          ),
         UserRole.chofer => const ChoferHomeScreen(),
         UserRole.bodega => const BodegaHomeScreen(),
         UserRole.admin => const AdminHomeScreen(),

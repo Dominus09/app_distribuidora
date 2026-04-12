@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
+import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
@@ -12,17 +13,19 @@ class VisitaDetalleScreen extends StatefulWidget {
   const VisitaDetalleScreen({
     super.key,
     required this.visita,
-    required this.isOnline,
+    required this.attemptRemoteSave,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
+    required this.apiService,
   });
 
   final Visita visita;
-  final bool isOnline;
+  final bool attemptRemoteSave;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
+  final ApiService apiService;
 
   @override
   State<VisitaDetalleScreen> createState() => _VisitaDetalleScreenState();
@@ -45,7 +48,8 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
     final r = await showVisitadoFlowSheet(
       context: context,
       visita: _visita,
-      isOnline: widget.isOnline,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      apiService: widget.apiService,
       locationService: widget.locationService,
       vendedorService: widget.vendedorService,
       syncService: widget.syncService,
@@ -57,7 +61,8 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
     final r = await showIncidenciaFlowSheet(
       context: context,
       visita: _visita,
-      isOnline: widget.isOnline,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      apiService: widget.apiService,
       locationService: widget.locationService,
       vendedorService: widget.vendedorService,
       syncService: widget.syncService,

@@ -1,6 +1,12 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
+import '../../auth/auth_navigation.dart';
+import '../../auth/services/auth_service.dart';
 import '../models/visita.dart';
+import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
@@ -8,20 +14,28 @@ import '../widgets/status_banner.dart';
 import '../widgets/summary_card.dart';
 import 'ruta_screen.dart';
 
-/// Dashboard principal del vendedor (mock, sin API).
+/// Dashboard principal del vendedor (ruta desde API + caché local).
 class VendedorHomeScreen extends StatefulWidget {
   const VendedorHomeScreen({
     super.key,
-    this.vendedorNombre = 'Juan',
+    this.vendedorCodigo = 'vendedor_1',
+    this.vendedorNombre = 'Vendedor',
     this.vendedorService,
     this.syncService,
     this.locationService,
+    this.apiService,
+    this.authService,
   });
 
+  /// Código para query `GET .../vendedor/ruta?vendedor=`.
+  final String vendedorCodigo;
+  /// Nombre para saludo en UI.
   final String vendedorNombre;
   final VendedorService? vendedorService;
   final SyncService? syncService;
   final LocationService? locationService;
+  final ApiService? apiService;
+  final DistribuidoraAuthService? authService;
 
   @override
   State<VendedorHomeScreen> createState() => _VendedorHomeScreenState();
@@ -31,14 +45,24 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   late final VendedorService _vendedorService;
   late final SyncService _syncService;
   late final LocationService _locationService;
+  late final ApiService _apiService;
+  late final DistribuidoraAuthService _authService;
+
+  late Future<List<Visita>> _rutaFuture;
 
   bool _routeStarted = false;
   bool _routeFinished = false;
   DateTime? _startTime;
   DateTime? _endTime;
-  bool _isOnline = true;
+  /// Simula falta de red (pruebas); la API solo se intenta si también hay conectividad real.
+  bool _forceOffline = false;
+  bool _connectivityOk = true;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+
+  bool get _attemptRemoteSave => _connectivityOk && !_forceOffline;
+
   bool _syncBusy = false;
-  late List<Visita> _visitas;
+  List<Visita> _visitas = [];
 
   /// Tras confirmar el cierre: cumplimiento y conteos (persistencia mock en estado).
   double? _porcentajeCumplimiento;
@@ -52,7 +76,65 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     _vendedorService = widget.vendedorService ?? VendedorService();
     _syncService = widget.syncService ?? SyncService();
     _locationService = widget.locationService ?? LocationService();
-    _visitas = List<Visita>.from(_vendedorService.loadInitialRoute());
+    _apiService = widget.apiService ?? ApiService();
+    _authService = widget.authService ?? DistribuidoraAuthService();
+    _rutaFuture = _cargarRutaDesdeApi();
+    _rutaFuture.then((list) {
+      if (mounted) setState(() => _visitas = list);
+    });
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      final ok = results.any((r) => r != ConnectivityResult.none);
+      if (mounted) setState(() => _connectivityOk = ok);
+    });
+    Connectivity().checkConnectivity().then((results) {
+      final ok = results.any((r) => r != ConnectivityResult.none);
+      if (mounted) setState(() => _connectivityOk = ok);
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  /// Carga remota con respaldo en disco si falla la API.
+  Future<List<Visita>> _cargarRutaDesdeApi() async {
+    final fecha = _fechaApi(DateTime.now());
+    try {
+      final list =
+          await _apiService.getRutaDelDia(fecha, widget.vendedorCodigo);
+      await _vendedorService.persistVisitasToDisk(list);
+      return list;
+    } catch (_) {
+      final cached = await _vendedorService.loadVisitasFromDisk();
+      if (cached != null && cached.isNotEmpty) {
+        return cached;
+      }
+      rethrow;
+    }
+  }
+
+  void _programarRecargaRuta() {
+    setState(() {
+      _rutaFuture = _cargarRutaDesdeApi();
+    });
+    _rutaFuture.then((list) {
+      if (mounted) setState(() => _visitas = list);
+    });
+  }
+
+  Future<void> _cerrarSesion() async {
+    await _authService.logout();
+    if (!context.mounted) return;
+    replaceWithDistribuidoraLogin(context);
+  }
+
+  static String _fechaApi(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
   }
 
   int get _totalClientes => _visitas.length;
@@ -97,13 +179,12 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   String get _progresoTexto =>
       '$_clientesAtendidos de $_totalClientes clientes';
 
-  void _persistVisitas() {
-    _vendedorService.persistVisitas(_visitas);
-  }
-
   void _setVisitas(List<Visita> next) {
-    setState(() => _visitas = next);
-    _persistVisitas();
+    setState(() {
+      _visitas = next;
+      _rutaFuture = Future<List<Visita>>.value(next);
+    });
+    unawaited(_vendedorService.persistVisitasToDisk(next));
   }
 
   void _iniciarRuta() {
@@ -209,11 +290,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
       MaterialPageRoute<void>(
         builder: (_) => RutaScreen(
           visitas: _visitas,
-          isOnline: _isOnline,
+          attemptRemoteSave: _attemptRemoteSave,
           locationService: _locationService,
           vendedorService: _vendedorService,
           syncService: _syncService,
+          apiService: _apiService,
           onVisitasChanged: _setVisitas,
+          reloadRuta: _cargarRutaDesdeApi,
         ),
       ),
     );
@@ -222,19 +305,22 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   Future<void> _sincronizacionForzada() async {
     if (_syncBusy) return;
     setState(() => _syncBusy = true);
-    final r = await _syncService.forceSyncPending(_visitas);
+    final r = await _syncService.forceSyncPending(_visitas, _apiService);
     if (!mounted) return;
     setState(() {
       _visitas = r.visitas;
-      _persistVisitas();
+      _rutaFuture = Future<List<Visita>>.value(r.visitas);
       _syncBusy = false;
     });
+    unawaited(_vendedorService.persistVisitasToDisk(r.visitas));
 
-    final mensaje = r.duplicateRun
-        ? 'Ya hay una sincronización en curso. Espera un momento e inténtalo de nuevo.'
-        : '${r.newlySyncedCount} registro(s) sincronizado(s).\n'
-            '${r.skippedDuplicatesCount} omitido(s) (duplicado o ya enviado).\n'
-            '${r.stillPendingCount} pendiente(s) de envío.';
+    final mensaje = r.errorMessage != null
+        ? 'Error al sincronizar: ${r.errorMessage}'
+        : r.duplicateRun
+            ? 'Ya hay una sincronización en curso. Espera un momento e inténtalo de nuevo.'
+            : '${r.newlySyncedCount} registro(s) sincronizado(s).\n'
+                '${r.skippedDuplicatesCount} omitido(s) (duplicado o ya enviado).\n'
+                '${r.stillPendingCount} pendiente(s) de envío.';
 
     await showDialog<void>(
       context: context,
@@ -257,10 +343,61 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     final ahora = DateTime.now();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Inicio')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
-        children: [
+      appBar: AppBar(
+        title: const Text('Inicio'),
+        actions: [
+          TextButton(
+            onPressed: _cerrarSesion,
+            child: const Text('Cerrar sesión'),
+          ),
+        ],
+      ),
+      body: FutureBuilder<List<Visita>>(
+        future: _rutaFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              _visitas.isEmpty) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError && _visitas.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 48),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No se pudo cargar la ruta',
+                      style: theme.textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      snapshot.error.toString(),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      onPressed: _programarRecargaRuta,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reintentar'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return RefreshIndicator(
+            onRefresh: () async {
+              _programarRecargaRuta();
+              await _rutaFuture;
+            },
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+              children: [
           const SizedBox(height: 4),
           Text(
             'Bienvenido, ${widget.vendedorNombre}',
@@ -285,10 +422,10 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
           ),
           const SizedBox(height: 16),
           ConnectionStatusBanner(
-            isOnline: _isOnline,
-            onToggleDemo: () => setState(() => _isOnline = !_isOnline),
+            isOnline: _attemptRemoteSave,
+            onToggleDemo: () => setState(() => _forceOffline = !_forceOffline),
           ),
-          if (!_isOnline) ...[
+          if (!_attemptRemoteSave) ...[
             const SizedBox(height: 12),
             const OfflineWorkBanner(),
           ],
@@ -496,7 +633,10 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
               ),
             ),
           ],
-        ],
+            ],
+          ),
+        );
+        },
       ),
     );
   }
