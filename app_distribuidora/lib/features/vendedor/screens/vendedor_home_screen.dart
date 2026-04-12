@@ -1,36 +1,58 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
-import '../models/visita_estado.dart';
-import '../services/mock_visitas.dart';
-import '../utils/vendedor_date_labels.dart';
-import '../widgets/clientes_map_placeholder.dart';
-import '../widgets/dashboard_summary_card.dart';
-import '../widgets/route_status_card.dart';
+import '../services/location_service.dart';
+import '../services/sync_service.dart';
+import '../services/vendedor_service.dart';
+import '../widgets/status_banner.dart';
+import '../widgets/summary_card.dart';
 import 'ruta_screen.dart';
 
+/// Dashboard principal del vendedor (mock, sin API).
 class VendedorHomeScreen extends StatefulWidget {
   const VendedorHomeScreen({
     super.key,
     this.vendedorNombre = 'Juan',
+    this.vendedorService,
+    this.syncService,
+    this.locationService,
   });
 
   final String vendedorNombre;
+  final VendedorService? vendedorService;
+  final SyncService? syncService;
+  final LocationService? locationService;
 
   @override
   State<VendedorHomeScreen> createState() => _VendedorHomeScreenState();
 }
 
 class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
+  late final VendedorService _vendedorService;
+  late final SyncService _syncService;
+  late final LocationService _locationService;
+
   bool _routeStarted = false;
   bool _routeFinished = false;
   DateTime? _startTime;
+  DateTime? _endTime;
+  bool _isOnline = true;
+  bool _syncBusy = false;
   late List<Visita> _visitas;
+
+  /// Tras confirmar el cierre: cumplimiento y conteos (persistencia mock en estado).
+  double? _porcentajeCumplimiento;
+  String? _estadoRutaCierre;
+  int? _clientesVisitadosCierre;
+  int? _clientesPendientesCierre;
 
   @override
   void initState() {
     super.initState();
-    _visitas = List<Visita>.from(mockVisitasDelDia());
+    _vendedorService = widget.vendedorService ?? VendedorService();
+    _syncService = widget.syncService ?? SyncService();
+    _locationService = widget.locationService ?? LocationService();
+    _visitas = List<Visita>.from(_vendedorService.loadInitialRoute());
   }
 
   int get _totalClientes => _visitas.length;
@@ -41,32 +63,145 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   int get _pendientes =>
       _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
 
+  int get _incidencias =>
+      _visitas.where((v) => v.estado == VisitaEstado.incidencia).length;
+
+  int get _pendientesSync =>
+      _visitas.where((v) => v.syncStatus == SyncStatus.pendingSync).length;
+
   String get _estadoRutaLabel {
-    if (_routeFinished) return 'Finalizada';
+    if (_routeFinished) {
+      if (_estadoRutaCierre == 'completada') return 'Finalizada (completada)';
+      if (_estadoRutaCierre == 'incompleta') return 'Finalizada (incompleta)';
+      return 'Finalizada';
+    }
     if (_routeStarted) return 'En progreso';
     return 'No iniciada';
   }
 
   Color get _estadoRutaColor {
-    if (_routeFinished) return const Color(0xFF2E7D32);
+    if (_routeFinished) {
+      if (_estadoRutaCierre == 'completada') return const Color(0xFF2E7D32);
+      if (_estadoRutaCierre == 'incompleta') return const Color(0xFFE65100);
+      return const Color(0xFF546E7A);
+    }
     if (_routeStarted) return const Color(0xFF1565C0);
     return const Color(0xFF757575);
   }
 
-  String get _progresoTexto => '$_visitados de $_totalClientes clientes';
+  /// Paradas con resultado (visitado o incidencia), coherente con el cierre de ruta.
+  int get _clientesAtendidos =>
+      _totalClientes -
+      _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
+
+  String get _progresoTexto =>
+      '$_clientesAtendidos de $_totalClientes clientes';
+
+  void _persistVisitas() {
+    _vendedorService.persistVisitas(_visitas);
+  }
+
+  void _setVisitas(List<Visita> next) {
+    setState(() => _visitas = next);
+    _persistVisitas();
+  }
 
   void _iniciarRuta() {
     setState(() {
       _routeStarted = true;
       _routeFinished = false;
       _startTime = DateTime.now();
+      _endTime = null;
+      _porcentajeCumplimiento = null;
+      _estadoRutaCierre = null;
+      _clientesVisitadosCierre = null;
+      _clientesPendientesCierre = null;
     });
   }
 
-  void _finalizarRuta() {
+  /// Progreso operativo: visitados = con resultado (visitado o incidencia); pendientes = aún pendiente.
+  _ProgresoRuta _calcularProgreso() {
+    final total = _totalClientes;
+    final pendientes = _pendientes;
+    final visitados = _clientesAtendidos;
+    final pct = total == 0 ? 0.0 : (visitados / total) * 100;
+    final estado = visitados == total ? 'completada' : 'incompleta';
+    return _ProgresoRuta(
+      totalClientes: total,
+      clientesVisitados: visitados,
+      clientesPendientes: pendientes,
+      porcentajeCumplimiento: pct,
+      estadoRuta: estado,
+    );
+  }
+
+  /// Muestra confirmación y, si aplica, cierra la ruta con métricas.
+  Future<void> _solicitarFinalizarRuta() async {
+    final p = _calcularProgreso();
+    final sinPendientes = p.clientesPendientes == 0;
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Finalizar ruta'),
+          content: sinPendientes
+              ? const Text(
+                  'Has completado todos los clientes.\n\n'
+                  '¿Deseas finalizar la ruta?',
+                )
+              : Text(
+                  '¿Deseas finalizar la ruta?\n\n'
+                  'Has completado ${p.clientesVisitados} de ${p.totalClientes} clientes.\n'
+                  'Te faltan ${p.clientesPendientes} cliente(s) por visitar.',
+                ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error,
+                foregroundColor: Theme.of(ctx).colorScheme.onError,
+              ),
+              child: const Text('Finalizar Ruta'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmar == true && mounted) {
+      _finalizarRuta(p);
+    }
+  }
+
+  /// Aplica cierre confirmado: estado de ruta, hora fin y resumen de cumplimiento.
+  void _finalizarRuta(_ProgresoRuta p) {
+    final pctRedondeado = double.parse(p.porcentajeCumplimiento.toStringAsFixed(1));
+
     setState(() {
       _routeFinished = true;
+      _routeStarted = false;
+      _endTime = DateTime.now();
+      _porcentajeCumplimiento = pctRedondeado;
+      _estadoRutaCierre = p.estadoRuta;
+      _clientesVisitadosCierre = p.clientesVisitados;
+      _clientesPendientesCierre = p.clientesPendientes;
     });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text(
+          'Ruta finalizada · Cumplimiento: ${pctRedondeado.toStringAsFixed(1)}%',
+        ),
+      ),
+    );
   }
 
   void _abrirRuta() {
@@ -74,10 +209,44 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
       MaterialPageRoute<void>(
         builder: (_) => RutaScreen(
           visitas: _visitas,
-          onVisitasChanged: (next) {
-            setState(() => _visitas = next);
-          },
+          isOnline: _isOnline,
+          locationService: _locationService,
+          vendedorService: _vendedorService,
+          syncService: _syncService,
+          onVisitasChanged: _setVisitas,
         ),
+      ),
+    );
+  }
+
+  Future<void> _sincronizacionForzada() async {
+    if (_syncBusy) return;
+    setState(() => _syncBusy = true);
+    final r = await _syncService.forceSyncPending(_visitas);
+    if (!mounted) return;
+    setState(() {
+      _visitas = r.visitas;
+      _persistVisitas();
+      _syncBusy = false;
+    });
+
+    final mensaje = r.duplicateRun
+        ? 'Ya hay una sincronización en curso. Espera un momento e inténtalo de nuevo.'
+        : '${r.newlySyncedCount} registro(s) sincronizado(s).\n'
+            '${r.skippedDuplicatesCount} omitido(s) (duplicado o ya enviado).\n'
+            '${r.stillPendingCount} pendiente(s) de envío.';
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sincronización completada'),
+        content: Text(mensaje),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Entendido'),
+          ),
+        ],
       ),
     );
   }
@@ -85,121 +254,294 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final ahora = DateTime.now();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Inicio')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
         children: [
-            const SizedBox(height: 8),
-            Text(
-              'Bienvenido, ${widget.vendedorNombre}',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+          const SizedBox(height: 4),
+          Text(
+            'Bienvenido, ${widget.vendedorNombre}',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w900,
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Hoy: ${diaSemanaHoy()}',
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-              ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Fecha: ${_fechaCorta(ahora)}',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 20),
-            RouteStatusCard(
-              estadoLabel: _estadoRutaLabel,
-              estadoColor: _estadoRutaColor,
-              horaInicio: _routeStarted && _startTime != null
-                  ? horaCorta(_startTime!)
-                  : null,
-              progresoTexto: _progresoTexto,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Día de atención: ${_diaSemana(ahora)}',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: DashboardSummaryCard(
-                    title: 'Pendientes',
-                    value: '$_pendientes',
-                    icon: Icons.pending_actions_outlined,
-                    color: const Color(0xFFF9A825),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DashboardSummaryCard(
-                    title: 'Visitados',
-                    value: '$_visitados',
-                    icon: Icons.check_circle_outline,
-                    color: const Color(0xFF2E7D32),
-                  ),
-                ),
-              ],
+          ),
+          const SizedBox(height: 16),
+          ConnectionStatusBanner(
+            isOnline: _isOnline,
+            onToggleDemo: () => setState(() => _isOnline = !_isOnline),
+          ),
+          if (!_isOnline) ...[
+            const SizedBox(height: 12),
+            const OfflineWorkBanner(),
+          ],
+          const SizedBox(height: 12),
+          Card(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
             ),
-            const SizedBox(height: 20),
-            const ClientesMapPlaceholder(),
-            const SizedBox(height: 24),
-            if (!_routeStarted && !_routeFinished) ...[
-              FilledButton.icon(
-                onPressed: _iniciarRuta,
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: const Text('Iniciar Ruta'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                ),
+            child: SwitchListTile(
+              title: const Text('GPS simulado disponible'),
+              subtitle: const Text(
+                'Desactívalo para probar visitas sin señal de ubicación.',
               ),
-            ] else if (_routeStarted && !_routeFinished) ...[
-              FilledButton.icon(
-                onPressed: _abrirRuta,
-                icon: const Icon(Icons.route_rounded),
-                label: const Text('Ver Ruta'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                ),
-              ),
-              const SizedBox(height: 12),
-              FilledButton.tonalIcon(
-                onPressed: _finalizarRuta,
-                icon: const Icon(Icons.flag_rounded),
-                label: const Text('Finalizar Ruta'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 54),
-                ),
-              ),
-            ] else ...[
-              Card(
-                elevation: 0,
-                color: theme.colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Row(
+              value: _locationService.mockGpsAvailable,
+              onChanged: (v) => setState(() => _locationService.mockGpsAvailable = v),
+            ),
+          ),
+          const SizedBox(height: 16),
+          RouteStatusPanel(
+            estadoLabel: _estadoRutaLabel,
+            estadoColor: _estadoRutaColor,
+            progresoTexto: _progresoTexto,
+            horaInicio: _startTime != null && (_routeStarted || _routeFinished)
+                ? _hora(_startTime!)
+                : null,
+            horaTermino:
+                _routeFinished && _endTime != null ? _hora(_endTime!) : null,
+          ),
+          const SizedBox(height: 16),
+          SummaryCard(
+            title: 'Pendientes',
+            value: '$_pendientes',
+            icon: Icons.pending_actions_outlined,
+            accentColor: const Color(0xFFF9A825),
+          ),
+          const SizedBox(height: 10),
+          SummaryCard(
+            title: 'Visitados',
+            value: '$_visitados',
+            icon: Icons.check_circle_outline,
+            accentColor: const Color(0xFF2E7D32),
+          ),
+          const SizedBox(height: 10),
+          SummaryCard(
+            title: 'Incidencias',
+            value: '$_incidencias',
+            icon: Icons.warning_amber_rounded,
+            accentColor: const Color(0xFFC62828),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'Pendientes de envío al servidor: $_pendientesSync',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.tonal(
+            onPressed: _syncBusy ? null : _sincronizacionForzada,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 54),
+            ),
+            child: _syncBusy
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.task_alt_rounded,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'Ruta finalizada. Puedes revisar el progreso arriba.',
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                            fontWeight: FontWeight.w500,
-                          ),
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: theme.colorScheme.primary,
                         ),
                       ),
+                      const SizedBox(width: 12),
+                      const Text('Sincronizando…'),
+                    ],
+                  )
+                : const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.sync_rounded),
+                      SizedBox(width: 10),
+                      Text('Sincronización forzada'),
                     ],
                   ),
+          ),
+          const SizedBox(height: 20),
+          Card(
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.65,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: SizedBox(
+              height: 168,
+              width: double.infinity,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.map_outlined,
+                      size: 42,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Mapa de clientes',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (!_routeStarted && !_routeFinished) ...[
+            FilledButton.icon(
+              onPressed: _iniciarRuta,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text('Iniciar Ruta'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(double.infinity, 54),
+              ),
+            ),
+          ] else if (_routeStarted && !_routeFinished) ...[
+            FilledButton.icon(
+              onPressed: _abrirRuta,
+              icon: const Icon(Icons.route_rounded),
+              label: const Text('Ver Ruta'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(double.infinity, 54),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _solicitarFinalizarRuta,
+              icon: const Icon(Icons.flag_rounded),
+              label: const Text('Finalizar Ruta'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(double.infinity, 54),
+                backgroundColor: theme.colorScheme.error,
+                foregroundColor: theme.colorScheme.onError,
+              ),
+            ),
+          ] else ...[
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.45,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.task_alt_rounded,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Ruta finalizada. Revisa el resumen y la hora de término arriba.',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (_porcentajeCumplimiento != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              'Cumplimiento: ${_porcentajeCumplimiento!.toStringAsFixed(1)}%',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                            if (_clientesVisitadosCierre != null &&
+                                _clientesPendientesCierre != null)
+                              Text(
+                                'Atendidos: $_clientesVisitadosCierre · '
+                                'Pendientes al cierre: $_clientesPendientesCierre',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
+        ],
       ),
     );
   }
+
+  static String _fechaCorta(DateTime d) {
+    final dd = d.day.toString().padLeft(2, '0');
+    final mm = d.month.toString().padLeft(2, '0');
+    return '$dd-$mm-${d.year}';
+  }
+
+  static String _diaSemana(DateTime d) {
+    const nombres = [
+      'Lunes',
+      'Martes',
+      'Miércoles',
+      'Jueves',
+      'Viernes',
+      'Sábado',
+      'Domingo',
+    ];
+    return nombres[d.weekday - 1];
+  }
+
+  static String _hora(DateTime d) {
+    final h = d.hour.toString().padLeft(2, '0');
+    final m = d.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+}
+
+/// Resumen numérico al cerrar la ruta (sin API).
+class _ProgresoRuta {
+  const _ProgresoRuta({
+    required this.totalClientes,
+    required this.clientesVisitados,
+    required this.clientesPendientes,
+    required this.porcentajeCumplimiento,
+    required this.estadoRuta,
+  });
+
+  final int totalClientes;
+  final int clientesVisitados;
+  final int clientesPendientes;
+  final double porcentajeCumplimiento;
+
+  /// `completada` si no quedaban paradas pendientes; si no, `incompleta`.
+  final String estadoRuta;
 }

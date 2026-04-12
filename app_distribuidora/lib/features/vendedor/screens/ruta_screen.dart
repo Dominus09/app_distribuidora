@@ -1,19 +1,30 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
-import '../models/visita_estado.dart';
-import '../widgets/visita_ruta_card.dart';
+import '../services/location_service.dart';
+import '../services/sync_service.dart';
+import '../services/vendedor_service.dart';
+import '../widgets/visita_card.dart';
 import 'visita_detalle_screen.dart';
 
+/// Lista operativa del día con base de salida y tarjetas por cliente.
 class RutaScreen extends StatefulWidget {
   const RutaScreen({
     super.key,
     required this.visitas,
     required this.onVisitasChanged,
+    required this.isOnline,
+    required this.locationService,
+    required this.vendedorService,
+    required this.syncService,
   });
 
   final List<Visita> visitas;
   final ValueChanged<List<Visita>> onVisitasChanged;
+  final bool isOnline;
+  final LocationService locationService;
+  final VendedorService vendedorService;
+  final SyncService syncService;
 
   @override
   State<RutaScreen> createState() => _RutaScreenState();
@@ -31,6 +42,12 @@ class _RutaScreenState extends State<RutaScreen> {
   void _emit(List<Visita> next) {
     setState(() => _visitas = next);
     widget.onVisitasChanged(next);
+  }
+
+  void _replaceAt(int index, Visita v) {
+    final next = [..._visitas];
+    next[index] = v;
+    _emit(next);
   }
 
   @override
@@ -82,28 +99,28 @@ class _RutaScreenState extends State<RutaScreen> {
 
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: VisitaRutaCard(
+            child: VisitaCard(
               visita: visita,
-              onVisited: () {
-                final next = [..._visitas];
-                next[i] = visita.copyWith(estado: VisitaEstado.visitado);
-                _emit(next);
-              },
-              onIncidencia: () {
-                final next = [..._visitas];
-                next[i] = visita.copyWith(estado: VisitaEstado.incidencia);
-                _emit(next);
-              },
-              onTap: () async {
+              isOnline: widget.isOnline,
+              locationService: widget.locationService,
+              vendedorService: widget.vendedorService,
+              syncService: widget.syncService,
+              onVisitadoPressed: (v) => _replaceAt(i, v),
+              onIncidenciaPressed: (v) => _replaceAt(i, v),
+              onTapDetalle: () async {
                 final updated = await Navigator.of(context).push<Visita>(
                   MaterialPageRoute<Visita>(
-                    builder: (_) => VisitaDetalleScreen(visita: visita),
+                    builder: (_) => VisitaDetalleScreen(
+                      visita: visita,
+                      isOnline: widget.isOnline,
+                      locationService: widget.locationService,
+                      vendedorService: widget.vendedorService,
+                      syncService: widget.syncService,
+                    ),
                   ),
                 );
                 if (updated != null && context.mounted) {
-                  final next = [..._visitas];
-                  next[i] = updated;
-                  _emit(next);
+                  _replaceAt(i, updated);
                 }
               },
             ),
