@@ -6,8 +6,8 @@ import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../utils/maps_navigation.dart';
-import '../widgets/clientes_ruta_map.dart';
 import '../widgets/visita_card.dart';
+import 'ruta_mapa_screen.dart';
 import 'visita_detalle_screen.dart';
 
 /// Lista operativa del día con base de salida y tarjetas por cliente.
@@ -40,7 +40,6 @@ class RutaScreen extends StatefulWidget {
 
 class _RutaScreenState extends State<RutaScreen> {
   late List<Visita> _visitas;
-  String? _mapFocusedVisitaId;
 
   @override
   void initState() {
@@ -67,7 +66,46 @@ class _RutaScreenState extends State<RutaScreen> {
     _emit(next);
   }
 
-  void _focusVisitaOnMap(Visita v) {
+  bool _hayCoordenadasEnRuta() {
+    for (final v in _visitas) {
+      if (visitaTieneCoordenadasCliente(v.latCliente, v.lonCliente)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _abrirMapa({String? focusVisitaId}) {
+    if (_visitas.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay clientes en la ruta.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    if (!_hayCoordenadasEnRuta()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Ningún cliente tiene coordenadas para mostrar en el mapa.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => RutaMapaScreen(
+          visitas: _visitas,
+          locationService: widget.locationService,
+          initialFocusedVisitaId: focusVisitaId,
+        ),
+      ),
+    );
+  }
+
+  void _centrarClienteEnMapa(Visita v) {
     if (!visitaTieneCoordenadasCliente(v.latCliente, v.lonCliente)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -77,13 +115,22 @@ class _RutaScreenState extends State<RutaScreen> {
       );
       return;
     }
-    setState(() => _mapFocusedVisitaId = v.id);
+    _abrirMapa(focusVisitaId: v.id);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Ruta del día')),
+      appBar: AppBar(
+        title: const Text('Ruta del día'),
+        actions: [
+          TextButton.icon(
+            onPressed: () => _abrirMapa(),
+            icon: const Icon(Icons.map_outlined),
+            label: const Text('Ver mapa'),
+          ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: () async {
           final loader = widget.reloadRuta;
@@ -108,18 +155,7 @@ class _RutaScreenState extends State<RutaScreen> {
           slivers: [
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: ClientesRutaMap(
-                  visitas: _visitas,
-                  locationService: widget.locationService,
-                  focusedVisitaId: _mapFocusedVisitaId,
-                  height: MediaQuery.sizeOf(context).height * 0.32,
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                 child: Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(
@@ -169,7 +205,7 @@ class _RutaScreenState extends State<RutaScreen> {
                         apiService: widget.apiService,
                         onVisitadoPressed: (v) => _replaceAt(i, v),
                         onIncidenciaPressed: (v) => _replaceAt(i, v),
-                        onMapFocus: () => _focusVisitaOnMap(visita),
+                        onMapFocus: () => _centrarClienteEnMapa(visita),
                         onTapDetalle: () async {
                           final updated = await Navigator.of(context).push<Visita>(
                             MaterialPageRoute<Visita>(

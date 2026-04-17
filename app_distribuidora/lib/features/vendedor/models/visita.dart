@@ -174,6 +174,9 @@ class Visita {
       rutaId! >= 1 &&
       orden >= 1;
 
+  /// Solo paradas pendientes admiten marcar visitado / incidencia de nuevo.
+  bool get puedeEditarse => estado == VisitaEstado.pendiente;
+
   factory Visita.fromJson(Map<String, dynamic> json) {
     final idVal = json['id'];
     final id = idVal == null ? '' : idVal.toString();

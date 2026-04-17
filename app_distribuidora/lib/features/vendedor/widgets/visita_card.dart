@@ -88,6 +88,7 @@ class VisitaCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = Color(visita.estado.toneColorValue);
+    final puedeEditar = visita.puedeEditarse;
 
     return Card(
       elevation: 2,
@@ -99,7 +100,7 @@ class VisitaCard extends StatelessWidget {
           Material(
             color: Colors.transparent,
             child: InkWell(
-              onTap: onMapFocus,
+              onTap: puedeEditar ? onMapFocus : null,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 14, 8, 12),
                 child: Row(
@@ -197,6 +198,28 @@ class VisitaCard extends StatelessWidget {
                           ],
                           const SizedBox(height: 8),
                           SyncStatusChip(visita: visita),
+                          if (!puedeEditar) ...[
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.lock_outline,
+                                  size: 18,
+                                  color: theme.colorScheme.outline,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Ya registrado',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -219,7 +242,9 @@ class VisitaCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: FilledButton.tonalIcon(
-                        onPressed: () => _openVisitado(context),
+                        onPressed: puedeEditar
+                            ? () => _openVisitado(context)
+                            : null,
                         icon: const Icon(Icons.check_circle_outline, size: 22),
                         label: const Text('Visitar'),
                         style: FilledButton.styleFrom(
@@ -235,7 +260,9 @@ class VisitaCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: FilledButton.tonalIcon(
-                        onPressed: () => _openIncidencia(context),
+                        onPressed: puedeEditar
+                            ? () => _openIncidencia(context)
+                            : null,
                         icon: const Icon(Icons.warning_amber_rounded, size: 22),
                         label: const Text('Incidencia'),
                         style: FilledButton.styleFrom(
@@ -255,7 +282,12 @@ class VisitaCard extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: () => _openDirections(context),
+                    onPressed: visitaTieneCoordenadasCliente(
+                      visita.latCliente,
+                      visita.lonCliente,
+                    )
+                        ? () => _openDirections(context)
+                        : null,
                     icon: const Icon(Icons.directions_outlined, size: 22),
                     label: const Text('Ir'),
                     style: FilledButton.styleFrom(

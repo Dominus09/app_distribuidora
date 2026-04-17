@@ -13,12 +13,16 @@ class ClientesRutaMap extends StatefulWidget {
     required this.locationService,
     this.focusedVisitaId,
     this.height = 220,
+    this.expand = false,
   });
 
   final List<Visita> visitas;
   final LocationService locationService;
   final String? focusedVisitaId;
+  /// Altura fija cuando [expand] es false.
   final double height;
+  /// Si es true, el mapa ocupa todo el espacio disponible del padre (p. ej. pantalla completa).
+  final bool expand;
 
   @override
   State<ClientesRutaMap> createState() => _ClientesRutaMapState();
@@ -198,30 +202,35 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
     final initialTarget = firstCliente ?? _quito;
     final initialZoom = firstCliente != null ? 14.0 : 12.0;
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        height: widget.height,
-        width: double.infinity,
-        child: GoogleMap(
-          initialCameraPosition: CameraPosition(
-            target: initialTarget,
-            zoom: initialZoom,
-          ),
-          markers: _buildMarkers(),
-          mapToolbarEnabled: false,
-          zoomControlsEnabled: false,
-          myLocationButtonEnabled: false,
-          compassEnabled: true,
-          onMapCreated: (controller) {
-            _controller = controller;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _fitCameraToMarkers();
-              _animateToFocused();
-            });
-          },
-        ),
+    final radius = widget.expand ? 12.0 : 16.0;
+    final map = GoogleMap(
+      initialCameraPosition: CameraPosition(
+        target: initialTarget,
+        zoom: initialZoom,
       ),
+      markers: _buildMarkers(),
+      mapToolbarEnabled: false,
+      zoomControlsEnabled: false,
+      myLocationButtonEnabled: false,
+      compassEnabled: true,
+      onMapCreated: (controller) {
+        _controller = controller;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _fitCameraToMarkers();
+          _animateToFocused();
+        });
+      },
+    );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: widget.expand
+          ? SizedBox.expand(child: map)
+          : SizedBox(
+              height: widget.height,
+              width: double.infinity,
+              child: map,
+            ),
     );
   }
 }

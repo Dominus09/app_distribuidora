@@ -28,6 +28,10 @@
 	<string>AIzaSyDuA-HaMt-NO5lgE5DdbNk1GNreEe0oGhY</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>La app usa tu ubicación para mostrarte en el mapa de ruta.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>La app necesita la cámara para adjuntar evidencia de incidencias.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>La app necesita acceso a la galería para adjuntar evidencia de incidencias.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

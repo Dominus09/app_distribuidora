@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
+import '../utils/incidencia_photo.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
@@ -8,7 +9,7 @@ import '../services/vendedor_service.dart';
 import '../widgets/sync_status_chip.dart';
 import '../widgets/visit_action_sheets.dart';
 
-/// Detalle completo de una visita; permite relanzar flujos visitado / incidencia.
+/// Detalle de una visita; visitado/incidencia solo si sigue [VisitaEstado.pendiente].
 class VisitaDetalleScreen extends StatefulWidget {
   const VisitaDetalleScreen({
     super.key,
@@ -75,6 +76,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
     final theme = Theme.of(context);
     final v = _visita;
     final estadoColor = Color(v.estado.toneColorValue);
+    final puedeEditar = v.puedeEditarse;
 
     return PopScope(
       canPop: false,
@@ -185,40 +187,61 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: theme.colorScheme.outlineVariant,
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: theme.colorScheme.outlineVariant,
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Center(
+                            child: buildEvidenciaFotoPreview(
+                              v.fotoPath!,
+                              maxHeight: 240,
                             ),
                           ),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.image_outlined,
-                                  size: 40,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Vista previa (mock)',
-                                  style: theme.textTheme.labelLarge,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  v.fotoPath!,
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SelectableText(
+                        v.fotoPath!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (!puedeEditar) ...[
+              const SizedBox(height: 16),
+              Card(
+                elevation: 0,
+                color: theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.9,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: theme.colorScheme.outlineVariant),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.lock_outline,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Ya registrado',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
@@ -229,7 +252,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
             ],
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: _visitado,
+              onPressed: puedeEditar ? _visitado : null,
               icon: const Icon(Icons.check_circle_outline),
               label: const Text('Marcar visitado'),
               style: FilledButton.styleFrom(
@@ -238,7 +261,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
             ),
             const SizedBox(height: 10),
             FilledButton.tonalIcon(
-              onPressed: _incidencia,
+              onPressed: puedeEditar ? _incidencia : null,
               icon: const Icon(Icons.warning_amber_rounded),
               label: const Text('Marcar incidencia'),
               style: FilledButton.styleFrom(

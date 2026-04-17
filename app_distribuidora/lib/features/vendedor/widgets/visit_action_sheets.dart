@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
+import '../utils/incidencia_photo.dart';
 
 /// Distancia máxima permitida para marcar visitado con GPS en línea (metros).
 const double kMaxDistanceVisitadoMetros = 300;
@@ -309,7 +311,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
   }
 }
 
-/// Bottom sheet: registro de incidencia con tipo, observación y foto mock.
+/// Bottom sheet: registro de incidencia con tipo, observación y evidencia (cámara / galería).
 Future<Visita?> showIncidenciaFlowSheet({
   required BuildContext context,
   required Visita visita,
@@ -371,32 +373,72 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
   final _obsCtrl = TextEditingController();
   String? _fotoPath;
   bool _busy = false;
+  bool _pickingPhoto = false;
+  /// Error de validación al pulsar Guardar; se muestra en el propio sheet.
+  String? _validationError;
+
+  @override
+  void initState() {
+    super.initState();
+    _obsCtrl.addListener(_onObservacionChanged);
+  }
+
+  static const _msgObsRequerida = 'La observación es obligatoria.';
+
+  void _onObservacionChanged() {
+    if (!mounted || _validationError == null) return;
+    if (_validationError == _msgObsRequerida &&
+        _obsCtrl.text.trim().isNotEmpty) {
+      setState(() => _validationError = null);
+    }
+  }
 
   @override
   void dispose() {
+    _obsCtrl.removeListener(_onObservacionChanged);
     _obsCtrl.dispose();
     super.dispose();
   }
 
-  void _adjuntarFotoDemo() {
-    setState(() {
-      _fotoPath =
-          'mock://incidencia_${widget.visita.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    });
+  Future<void> _pickFrom(ImageSource source) async {
+    setState(() => _pickingPhoto = true);
+    try {
+      final path = await pickAndPersistIncidenciaPhoto(
+        source: source,
+        visitaId: widget.visita.id,
+      );
+      if (!mounted) return;
+      if (path == null) return;
+      setState(() {
+        _fotoPath = path;
+        _validationError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _toast(
+        'No se pudo obtener la foto. Comprueba permisos de cámara o galería e inténtalo de nuevo.',
+      );
+    } finally {
+      if (mounted) setState(() => _pickingPhoto = false);
+    }
   }
 
   Future<void> _guardar() async {
+    if (!mounted) return;
+    setState(() => _validationError = null);
+
     final obs = _obsCtrl.text.trim();
     if (obs.isEmpty) {
-      _toast('La observación es obligatoria.');
+      setState(() {
+        _validationError = _msgObsRequerida;
+      });
       return;
     }
-    if (_fotoPath == null) {
-      if (_tipo == TipoIncidencia.atencionTelefonica) {
-        _toast('Debe subir evidencia para atención telefónica');
-      } else {
-        _toast('Debes adjuntar la evidencia (usa el botón de foto demo).');
-      }
+    final foto = _fotoPath?.trim();
+    if (foto == null || foto.isEmpty) {
+      setState(() {
+        _validationError = 'Debe subir evidencia antes de guardar';
+      });
       return;
     }
 
@@ -514,7 +556,12 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
                 )
                 .toList(),
             onChanged: (v) {
-              if (v != null) setState(() => _tipo = v);
+              if (v != null) {
+                setState(() {
+                  _tipo = v;
+                  _validationError = null;
+                });
+              }
             },
           ),
           const SizedBox(height: 16),
@@ -528,22 +575,83 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
             ),
           ),
           const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: _adjuntarFotoDemo,
-            icon: const Icon(Icons.photo_camera_outlined),
-            label: Text(
-              _tipo == TipoIncidencia.atencionTelefonica
-                  ? (_fotoPath == null
-                      ? 'Adjuntar evidencia (obligatoria)'
-                      : 'Evidencia lista (volver a generar)')
-                  : (_fotoPath == null
-                      ? 'Adjuntar foto (demo obligatoria)'
-                      : 'Foto lista (volver a generar)'),
-            ),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 48),
-            ),
+          Text(
+            'Evidencia (obligatoria)',
+            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _busy || _pickingPhoto
+                      ? null
+                      : () => _pickFrom(ImageSource.camera),
+                  icon: _pickingPhoto
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: theme.colorScheme.primary,
+                          ),
+                        )
+                      : const Icon(Icons.photo_camera_outlined),
+                  label: const Text('Cámara'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _busy || _pickingPhoto
+                      ? null
+                      : () => _pickFrom(ImageSource.gallery),
+                  icon: const Icon(Icons.photo_library_outlined),
+                  label: const Text('Galería'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 48),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_fotoPath != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Vista previa',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: ColoredBox(
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: Center(
+                  child: buildEvidenciaFotoPreview(
+                    _fotoPath!,
+                    maxHeight: 220,
+                  ),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _busy || _pickingPhoto
+                    ? null
+                    : () => setState(() {
+                          _fotoPath = null;
+                          _validationError = null;
+                        }),
+                child: const Text('Quitar foto'),
+              ),
+            ),
+          ],
           if (_tipo == TipoIncidencia.atencionTelefonica) ...[
             const SizedBox(height: 8),
             Text(
@@ -563,6 +671,36 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          if (_validationError != null) ...[
+            const SizedBox(height: 16),
+            Material(
+              color: theme.colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.error_outline_rounded,
+                      color: theme.colorScheme.onErrorContainer,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _validationError!,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.w700,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           FilledButton(
             onPressed: _busy ? null : _guardar,
