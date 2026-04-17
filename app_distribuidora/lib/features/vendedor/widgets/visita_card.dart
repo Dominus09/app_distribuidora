@@ -5,10 +5,11 @@ import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
+import '../utils/maps_navigation.dart';
 import 'sync_status_chip.dart';
 import 'visit_action_sheets.dart';
 
-/// Tarjeta de parada en ruta con acciones rápidas.
+/// Tarjeta de parada en ruta con acciones rápidas (terreno).
 class VisitaCard extends StatelessWidget {
   const VisitaCard({
     super.key,
@@ -21,6 +22,7 @@ class VisitaCard extends StatelessWidget {
     required this.onVisitadoPressed,
     required this.onIncidenciaPressed,
     required this.onTapDetalle,
+    required this.onMapFocus,
   });
 
   final Visita visita;
@@ -32,10 +34,28 @@ class VisitaCard extends StatelessWidget {
   final ValueChanged<Visita> onVisitadoPressed;
   final ValueChanged<Visita> onIncidenciaPressed;
   final VoidCallback onTapDetalle;
+  final VoidCallback onMapFocus;
 
-  void _navigate() {
-    // ignore: avoid_print
-    print('Abrir mapa para ${visita.clienteNombre}');
+  Future<void> _openDirections(BuildContext context) async {
+    if (!visitaTieneCoordenadasCliente(visita.latCliente, visita.lonCliente)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Este cliente no tiene coordenadas para navegar.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final ok = await launchGoogleMapsDirections(visita.latCliente, visita.lonCliente);
+    if (!context.mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo abrir Google Maps.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _openVisitado(BuildContext context) async {
@@ -73,144 +93,184 @@ class VisitaCard extends StatelessWidget {
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTapDetalle,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 14, 14, 14),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 44,
-                child: Text(
-                  '${visita.orden}',
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    height: 1.05,
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onMapFocus,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 8, 12),
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            visita.clienteNombre,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: c.withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            visita.estado.label,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: c,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.place_outlined,
-                          size: 18,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            visita.direccion,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (visita.conCompra != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        visita.conCompra! ? 'Con compra' : 'Sin compra',
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.tertiary,
+                    SizedBox(
+                      width: 44,
+                      child: Text(
+                        '${visita.orden}',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
+                          color: theme.colorScheme.primary,
                         ),
                       ),
-                    ],
-                    if (visita.tipoIncidencia != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Incidencia: ${visita.tipoIncidencia!.label}',
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.error,
-                        ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  visita.clienteNombre,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: c.withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  visita.estado.label,
+                                  style: theme.textTheme.labelLarge?.copyWith(
+                                    color: c,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.place_outlined,
+                                size: 22,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  visita.direccion,
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    height: 1.25,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (visita.conCompra != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              visita.conCompra! ? 'Con compra' : 'Sin compra',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.tertiary,
+                              ),
+                            ),
+                          ],
+                          if (visita.tipoIncidencia != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Incidencia: ${visita.tipoIncidencia!.label}',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          SyncStatusChip(visita: visita),
+                        ],
                       ),
-                    ],
-                    const SizedBox(height: 8),
-                    SyncStatusChip(visita: visita),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton.tonalIcon(
-                          onPressed: () => _openVisitado(context),
-                          icon: const Icon(Icons.check_circle_outline, size: 20),
-                          label: const Text('Visitado'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: () => _openIncidencia(context),
-                          icon: const Icon(Icons.warning_amber_rounded, size: 20),
-                          label: const Text('Incidencia'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            foregroundColor: theme.colorScheme.error,
-                          ),
-                        ),
-                        FilledButton.tonalIcon(
-                          onPressed: _navigate,
-                          icon: const Icon(Icons.navigation_outlined, size: 20),
-                          label: const Text('Navegar'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 48),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                          ),
-                        ),
-                      ],
+                    ),
+                    IconButton(
+                      tooltip: 'Ver ficha',
+                      iconSize: 28,
+                      onPressed: onTapDetalle,
+                      icon: const Icon(Icons.description_outlined),
                     ),
                   ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => _openVisitado(context),
+                        icon: const Icon(Icons.check_circle_outline, size: 22),
+                        label: const Text('Visitar'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => _openIncidencia(context),
+                        icon: const Icon(Icons.warning_amber_rounded, size: 22),
+                        label: const Text('Incidencia'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          foregroundColor: theme.colorScheme.error,
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _openDirections(context),
+                    icon: const Icon(Icons.directions_outlined, size: 22),
+                    label: const Text('Ir'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 52),
+                      textStyle: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

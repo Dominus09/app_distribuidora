@@ -39,9 +39,10 @@ extension VisitaEstadoUi on VisitaEstado {
         VisitaEstado.incidencia => 'Incidencia',
       };
 
+  /// Colores de estado en terreno: pendiente verde, visitado azul, incidencia rojo.
   int get toneColorValue => switch (this) {
-        VisitaEstado.pendiente => 0xFFF9A825,
-        VisitaEstado.visitado => 0xFF2E7D32,
+        VisitaEstado.pendiente => 0xFF2E7D32,
+        VisitaEstado.visitado => 0xFF1565C0,
         VisitaEstado.incidencia => 0xFFC62828,
       };
 

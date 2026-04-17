@@ -460,14 +460,14 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
             title: 'Pendientes',
             value: '$_pendientes',
             icon: Icons.pending_actions_outlined,
-            accentColor: const Color(0xFFF9A825),
+            accentColor: const Color(0xFF2E7D32),
           ),
           const SizedBox(height: 10),
           SummaryCard(
             title: 'Visitados',
             value: '$_visitados',
             icon: Icons.check_circle_outline,
-            accentColor: const Color(0xFF2E7D32),
+            accentColor: const Color(0xFF1565C0),
           ),
           const SizedBox(height: 10),
           SummaryCard(
@@ -538,9 +538,17 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Mapa de clientes',
+                      'Mapa en "Ver Ruta"',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Clientes, GPS simulado y navegación',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ],

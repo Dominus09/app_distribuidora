@@ -5,6 +5,8 @@ import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
+import '../utils/maps_navigation.dart';
+import '../widgets/clientes_ruta_map.dart';
 import '../widgets/visita_card.dart';
 import 'visita_detalle_screen.dart';
 
@@ -38,11 +40,20 @@ class RutaScreen extends StatefulWidget {
 
 class _RutaScreenState extends State<RutaScreen> {
   late List<Visita> _visitas;
+  String? _mapFocusedVisitaId;
 
   @override
   void initState() {
     super.initState();
     _visitas = List<Visita>.from(widget.visitas);
+  }
+
+  @override
+  void didUpdateWidget(covariant RutaScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visitas != widget.visitas) {
+      _visitas = List<Visita>.from(widget.visitas);
+    }
   }
 
   void _emit(List<Visita> next) {
@@ -54,6 +65,19 @@ class _RutaScreenState extends State<RutaScreen> {
     final next = [..._visitas];
     next[index] = v;
     _emit(next);
+  }
+
+  void _focusVisitaOnMap(Visita v) {
+    if (!visitaTieneCoordenadasCliente(v.latCliente, v.lonCliente)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Este cliente no tiene coordenadas en el mapa.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    setState(() => _mapFocusedVisitaId = v.id);
   }
 
   @override
@@ -79,14 +103,23 @@ class _RutaScreenState extends State<RutaScreen> {
             );
           }
         },
-        child: ListView.builder(
+        child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          itemCount: _visitas.length + 1,
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 16),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: ClientesRutaMap(
+                  visitas: _visitas,
+                  locationService: widget.locationService,
+                  focusedVisitaId: _mapFocusedVisitaId,
+                  height: MediaQuery.sizeOf(context).height * 0.32,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 child: Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(
@@ -117,43 +150,51 @@ class _RutaScreenState extends State<RutaScreen> {
                     ),
                   ),
                 ),
-              );
-            }
-
-            final i = index - 1;
-            final visita = _visitas[i];
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: VisitaCard(
-                visita: visita,
-                attemptRemoteSave: widget.attemptRemoteSave,
-                locationService: widget.locationService,
-                vendedorService: widget.vendedorService,
-                syncService: widget.syncService,
-                apiService: widget.apiService,
-                onVisitadoPressed: (v) => _replaceAt(i, v),
-                onIncidenciaPressed: (v) => _replaceAt(i, v),
-                onTapDetalle: () async {
-                  final updated = await Navigator.of(context).push<Visita>(
-                    MaterialPageRoute<Visita>(
-                      builder: (_) => VisitaDetalleScreen(
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) {
+                    final visita = _visitas[i];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: VisitaCard(
                         visita: visita,
                         attemptRemoteSave: widget.attemptRemoteSave,
                         locationService: widget.locationService,
                         vendedorService: widget.vendedorService,
                         syncService: widget.syncService,
                         apiService: widget.apiService,
+                        onVisitadoPressed: (v) => _replaceAt(i, v),
+                        onIncidenciaPressed: (v) => _replaceAt(i, v),
+                        onMapFocus: () => _focusVisitaOnMap(visita),
+                        onTapDetalle: () async {
+                          final updated = await Navigator.of(context).push<Visita>(
+                            MaterialPageRoute<Visita>(
+                              builder: (_) => VisitaDetalleScreen(
+                                visita: visita,
+                                attemptRemoteSave: widget.attemptRemoteSave,
+                                locationService: widget.locationService,
+                                vendedorService: widget.vendedorService,
+                                syncService: widget.syncService,
+                                apiService: widget.apiService,
+                              ),
+                            ),
+                          );
+                          if (updated != null && context.mounted) {
+                            _replaceAt(i, updated);
+                          }
+                        },
                       ),
-                    ),
-                  );
-                  if (updated != null && context.mounted) {
-                    _replaceAt(i, updated);
-                  }
-                },
+                    );
+                  },
+                  childCount: _visitas.length,
+                ),
               ),
-            );
-          },
+            ),
+          ],
         ),
       ),
     );
