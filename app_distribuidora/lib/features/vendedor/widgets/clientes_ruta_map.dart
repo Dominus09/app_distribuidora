@@ -3,8 +3,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../models/visita.dart';
 import '../services/location_service.dart';
+import '../services/ruta_map_geolocator.dart';
 
-/// Mapa de la ruta: clientes (`lat_cliente` / `lon_cliente`) y posición del vendedor (servicio existente).
+/// Mapa de la ruta: clientes (`lat_cliente` / `lon_cliente`) y vendedor (Geolocator + respaldo mock).
 class ClientesRutaMap extends StatefulWidget {
   const ClientesRutaMap({
     super.key,
@@ -26,7 +27,6 @@ class ClientesRutaMap extends StatefulWidget {
 class _ClientesRutaMapState extends State<ClientesRutaMap> {
   GoogleMapController? _controller;
   LatLng? _userLatLng;
-  bool _userMarkerTried = false;
 
   static const LatLng _quito = LatLng(-0.22985, -78.52495);
 
@@ -53,7 +53,8 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
     for (var i = 0; i < a.length; i++) {
       if (a[i].id != b[i].id ||
           a[i].latCliente != b[i].latCliente ||
-          a[i].lonCliente != b[i].lonCliente) {
+          a[i].lonCliente != b[i].lonCliente ||
+          a[i].nombreFantasia != b[i].nombreFantasia) {
         return false;
       }
     }
@@ -61,8 +62,12 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
   }
 
   Future<void> _refreshUserLocation() async {
-    if (_userMarkerTried) return;
-    _userMarkerTried = true;
+    final device = await RutaMapGeolocator.tryDeviceLatLng();
+    if (!mounted) return;
+    if (device != null) {
+      setState(() => _userLatLng = device);
+      return;
+    }
     final gpsOk = await widget.locationService.isGpsAvailable();
     if (!gpsOk || !mounted) return;
     final snap = await widget.locationService.getCurrentPosition();
@@ -93,7 +98,10 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
           markerId: MarkerId('cliente_${v.id}'),
           position: pos,
           zIndexInt: focused ? 2 : 1,
-          infoWindow: InfoWindow(title: v.clienteNombre, snippet: v.direccion),
+          infoWindow: InfoWindow(
+            title: v.tituloMapaCliente,
+            snippet: v.direccion.isEmpty ? null : v.direccion,
+          ),
           icon: BitmapDescriptor.defaultMarkerWithHue(_markerHue(v.estado)),
         ),
       );
@@ -104,13 +112,22 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
         Marker(
           markerId: const MarkerId('vendedor_pos'),
           position: u,
-          zIndexInt: 3,
-          infoWindow: const InfoWindow(title: 'Tu posición'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          zIndexInt: 4,
+          infoWindow: const InfoWindow(title: 'Tu ubicación'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
         ),
       );
     }
     return out;
+  }
+
+  /// Primera parada con coordenadas (orden de la ruta).
+  LatLng? _firstClienteLatLng() {
+    for (final v in widget.visitas) {
+      if (v.latCliente == 0 && v.lonCliente == 0) continue;
+      return LatLng(v.latCliente, v.lonCliente);
+    }
+    return null;
   }
 
   Iterable<LatLng> _allRelevantPoints() sync* {
@@ -131,7 +148,7 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
       return;
     }
     if (pts.length == 1) {
-      await c.animateCamera(CameraUpdate.newLatLngZoom(pts.first, 15));
+      await c.animateCamera(CameraUpdate.newLatLngZoom(pts.first, 14.5));
       return;
     }
     double minLat = pts.first.latitude;
@@ -177,8 +194,9 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
 
   @override
   Widget build(BuildContext context) {
-    final pts = _allRelevantPoints().toList();
-    final initial = pts.isNotEmpty ? pts.first : _quito;
+    final firstCliente = _firstClienteLatLng();
+    final initialTarget = firstCliente ?? _quito;
+    final initialZoom = firstCliente != null ? 14.0 : 12.0;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
@@ -186,7 +204,10 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
         height: widget.height,
         width: double.infinity,
         child: GoogleMap(
-          initialCameraPosition: CameraPosition(target: initial, zoom: 13),
+          initialCameraPosition: CameraPosition(
+            target: initialTarget,
+            zoom: initialZoom,
+          ),
           markers: _buildMarkers(),
           mapToolbarEnabled: false,
           zoomControlsEnabled: false,

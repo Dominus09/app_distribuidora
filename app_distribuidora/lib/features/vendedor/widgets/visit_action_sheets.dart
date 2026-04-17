@@ -392,37 +392,52 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
       return;
     }
     if (_fotoPath == null) {
-      _toast('Debes adjuntar la evidencia (usa el botón de foto demo).');
+      if (_tipo == TipoIncidencia.atencionTelefonica) {
+        _toast('Debe subir evidencia para atención telefónica');
+      } else {
+        _toast('Debes adjuntar la evidencia (usa el botón de foto demo).');
+      }
       return;
     }
 
     setState(() => _busy = true);
     try {
       final actionId = widget.vendedorService.generateLocalActionId();
-      final gpsOk = await widget.locationService.isGpsAvailable();
+      final telefonica = _tipo == TipoIncidencia.atencionTelefonica;
+
+      var gpsOk = false;
       LocationSnapshot? snap;
-      if (gpsOk) {
-        snap = await widget.locationService.getCurrentPosition();
+      if (!telefonica) {
+        gpsOk = await widget.locationService.isGpsAvailable();
+        if (gpsOk) {
+          snap = await widget.locationService.getCurrentPosition();
+        }
       }
 
       final ahora = DateTime.now();
-      final metros = snap != null
-          ? widget.locationService.distanceToCliente(snap, widget.visita)
-          : null;
+      final metros = telefonica
+          ? null
+          : (snap != null
+              ? widget.locationService.distanceToCliente(snap, widget.visita)
+              : null);
 
-      final validacion = !widget.attemptRemoteSave
-          ? ValidacionEstado.offline
-          : (gpsOk && snap != null
-              ? ValidacionEstado.validado
-              : ValidacionEstado.sinGps);
+      final ValidacionEstado validacion = telefonica
+          ? (!widget.attemptRemoteSave
+              ? ValidacionEstado.offline
+              : ValidacionEstado.sinGps)
+          : (!widget.attemptRemoteSave
+              ? ValidacionEstado.offline
+              : (gpsOk && snap != null
+                  ? ValidacionEstado.validado
+                  : ValidacionEstado.sinGps));
 
       final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.incidencia,
         tipoIncidencia: _tipo,
         observacion: obs,
         conCompra: null,
-        latVisita: snap?.latitude,
-        lonVisita: snap?.longitude,
+        latVisita: telefonica ? null : snap?.latitude,
+        lonVisita: telefonica ? null : snap?.longitude,
         fechaHoraVisita: ahora,
         distanciaMetros: metros,
         validacionEstado: validacion,
@@ -517,14 +532,28 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
             onPressed: _adjuntarFotoDemo,
             icon: const Icon(Icons.photo_camera_outlined),
             label: Text(
-              _fotoPath == null
-                  ? 'Adjuntar foto (demo obligatoria)'
-                  : 'Foto lista (volver a generar)',
+              _tipo == TipoIncidencia.atencionTelefonica
+                  ? (_fotoPath == null
+                      ? 'Adjuntar evidencia (obligatoria)'
+                      : 'Evidencia lista (volver a generar)')
+                  : (_fotoPath == null
+                      ? 'Adjuntar foto (demo obligatoria)'
+                      : 'Foto lista (volver a generar)'),
             ),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size(double.infinity, 48),
             ),
           ),
+          if (_tipo == TipoIncidencia.atencionTelefonica) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Debe subir evidencia del contacto (llamada o WhatsApp)',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.secondary,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             widget.attemptRemoteSave

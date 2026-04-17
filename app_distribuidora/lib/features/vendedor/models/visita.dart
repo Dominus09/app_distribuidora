@@ -30,6 +30,8 @@ enum TipoIncidencia {
   noCompra,
   fueraDeRuta,
   otros,
+  /// Contacto remoto; sin validación GPS, evidencia obligatoria.
+  atencionTelefonica,
 }
 
 extension VisitaEstadoUi on VisitaEstado {
@@ -91,6 +93,7 @@ extension TipoIncidenciaUi on TipoIncidencia {
         TipoIncidencia.noCompra => 'No compra',
         TipoIncidencia.fueraDeRuta => 'Fuera de ruta',
         TipoIncidencia.otros => 'Otros',
+        TipoIncidencia.atencionTelefonica => 'Atención telefónica',
       };
 
   /// FastAPI enum en `VisitaCreate`: textos con espacio, no snake_case.
@@ -100,6 +103,7 @@ extension TipoIncidenciaUi on TipoIncidencia {
         TipoIncidencia.noCompra => 'no compra',
         TipoIncidencia.fueraDeRuta => 'fuera de ruta',
         TipoIncidencia.otros => 'otros',
+        TipoIncidencia.atencionTelefonica => 'atencion telefonica',
       };
 }
 
@@ -109,6 +113,7 @@ class Visita {
     this.rutaId,
     this.clienteId,
     required this.clienteNombre,
+    this.nombreFantasia,
     required this.direccion,
     required this.orden,
     required this.estado,
@@ -134,7 +139,16 @@ class Visita {
   /// Identificador de cliente en ERP (`VisitaCreate.cliente_id` es string en API).
   final String? clienteId;
   final String clienteNombre;
+  /// Si la API envía `nombre_fantasia`, se usa en mapa / UI cuando aplica.
+  final String? nombreFantasia;
   final String direccion;
+
+  /// Título en mapa: prioriza `nombre_fantasia`, si no `clienteNombre`.
+  String get tituloMapaCliente {
+    final n = nombreFantasia?.trim();
+    if (n != null && n.isNotEmpty) return n;
+    return clienteNombre;
+  }
   final int orden;
   final VisitaEstado estado;
   final TipoIncidencia? tipoIncidencia;
@@ -169,6 +183,7 @@ class Visita {
       rutaId: _parseInt(json['ruta_id']),
       clienteId: _parseClienteId(json['cliente_id']),
       clienteNombre: _parseClienteNombre(json),
+      nombreFantasia: _str(json, 'nombre_fantasia'),
       direccion: _parseDireccion(json),
       orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
       estado: _parseEstado(_str(json, 'estado')),
@@ -195,6 +210,7 @@ class Visita {
       if (rutaId != null) 'ruta_id': rutaId,
       if (clienteId != null) 'cliente_id': clienteId,
       'cliente_nombre': clienteNombre,
+      if (nombreFantasia != null) 'nombre_fantasia': nombreFantasia,
       'direccion': direccion,
       'orden_ruta': orden,
       'estado': estado.apiValue,
@@ -278,6 +294,7 @@ class Visita {
     Object? rutaId = _sentinel,
     Object? clienteId = _sentinel,
     String? clienteNombre,
+    Object? nombreFantasia = _sentinel,
     String? direccion,
     int? orden,
     VisitaEstado? estado,
@@ -302,6 +319,9 @@ class Visita {
           ? this.clienteId
           : clienteId as String?,
       clienteNombre: clienteNombre ?? this.clienteNombre,
+      nombreFantasia: nombreFantasia == _sentinel
+          ? this.nombreFantasia
+          : nombreFantasia as String?,
       direccion: direccion ?? this.direccion,
       orden: orden ?? this.orden,
       estado: estado ?? this.estado,
@@ -466,6 +486,9 @@ TipoIncidencia? _parseTipoIncidencia(String? s) {
       return TipoIncidencia.fueraDeRuta;
     case 'otros':
       return TipoIncidencia.otros;
+    case 'atencion telefonica':
+    case 'atención telefonica':
+      return TipoIncidencia.atencionTelefonica;
     default:
       return null;
   }

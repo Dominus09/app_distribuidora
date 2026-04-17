@@ -25,7 +25,9 @@
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>GMSApiKey</key>
-	<string></string>
+	<string>AIzaSyDuA-HaMt-NO5lgE5DdbNk1GNreEe0oGhY</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>La app usa tu ubicación para mostrarte en el mapa de ruta.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
