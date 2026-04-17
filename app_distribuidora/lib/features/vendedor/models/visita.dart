@@ -2,11 +2,7 @@
 // Contrato alineado con OpenAPI: VisitaCreate, VisitaResponse (Quillotana Analytics API).
 
 /// Estado operativo de la visita en terreno.
-enum VisitaEstado {
-  pendiente,
-  visitado,
-  incidencia,
-}
+enum VisitaEstado { pendiente, visitado, incidencia }
 
 /// Resultado de la validación por georreferencia.
 enum ValidacionEstado {
@@ -17,11 +13,9 @@ enum ValidacionEstado {
   offline,
 }
 
-/// Sincronización con backend.
-enum SyncStatus {
-  synced,
-  pendingSync,
-}
+/// Sincronización con backend y estados locales de cola.
+/// `syncing` y `syncError` son solo cliente; en API se envían como `pending_sync`.
+enum SyncStatus { synced, pendingSync, syncing, syncError }
 
 /// Tipos de incidencia reportables.
 enum TipoIncidencia {
@@ -30,81 +24,100 @@ enum TipoIncidencia {
   noCompra,
   fueraDeRuta,
   otros,
+
   /// Contacto remoto; sin validación GPS, evidencia obligatoria.
   atencionTelefonica,
 }
 
 extension VisitaEstadoUi on VisitaEstado {
   String get label => switch (this) {
-        VisitaEstado.pendiente => 'Pendiente',
-        VisitaEstado.visitado => 'Visitado',
-        VisitaEstado.incidencia => 'Incidencia',
-      };
+    VisitaEstado.pendiente => 'Pendiente',
+    VisitaEstado.visitado => 'Visitado',
+    VisitaEstado.incidencia => 'Incidencia',
+  };
 
-  /// Colores de estado en terreno: pendiente verde, visitado azul, incidencia rojo.
+  /// Colores de estado en terreno: pendiente amarillo, visitado azul marca, incidencia rojo marca.
   int get toneColorValue => switch (this) {
-        VisitaEstado.pendiente => 0xFF2E7D32,
-        VisitaEstado.visitado => 0xFF1565C0,
-        VisitaEstado.incidencia => 0xFFC62828,
-      };
+    VisitaEstado.pendiente => 0xFFFFC107,
+    VisitaEstado.visitado => 0xFF1F3A5F,
+    VisitaEstado.incidencia => 0xFFE10600,
+  };
 
   /// Valores del enum en FastAPI (`VisitaCreate` / `VisitaResponse`).
   String get apiValue => switch (this) {
-        VisitaEstado.pendiente => 'pendiente',
-        VisitaEstado.visitado => 'visitado',
-        VisitaEstado.incidencia => 'incidencia',
-      };
+    VisitaEstado.pendiente => 'pendiente',
+    VisitaEstado.visitado => 'visitado',
+    VisitaEstado.incidencia => 'incidencia',
+  };
 }
 
 extension ValidacionEstadoUi on ValidacionEstado {
   String get label => switch (this) {
-        ValidacionEstado.validado => 'Validado (≤ 300 m)',
-        ValidacionEstado.fueraRango => 'Fuera de rango (> 300 m)',
-        ValidacionEstado.sinGps => 'Sin GPS',
-        ValidacionEstado.pendienteValidacion => 'Pendiente de validación',
-        ValidacionEstado.offline => 'Sin conexión',
-      };
+    ValidacionEstado.validado => 'Validado (≤ 500 m)',
+    ValidacionEstado.fueraRango => 'Fuera de rango (> 500 m)',
+    ValidacionEstado.sinGps => 'Sin GPS',
+    ValidacionEstado.pendienteValidacion => 'Pendiente de validación',
+    ValidacionEstado.offline => 'Sin conexión',
+  };
 
   String get apiValue => switch (this) {
-        ValidacionEstado.validado => 'validado',
-        ValidacionEstado.fueraRango => 'fuera_rango',
-        ValidacionEstado.sinGps => 'sin_gps',
-        ValidacionEstado.pendienteValidacion => 'pendiente_validacion',
-        ValidacionEstado.offline => 'offline',
-      };
+    ValidacionEstado.validado => 'validado',
+    ValidacionEstado.fueraRango => 'fuera_rango',
+    ValidacionEstado.sinGps => 'sin_gps',
+    ValidacionEstado.pendienteValidacion => 'pendiente_validacion',
+    ValidacionEstado.offline => 'offline',
+  };
 }
 
 extension SyncStatusUi on SyncStatus {
   String get label => switch (this) {
-        SyncStatus.synced => 'Sincronizado',
-        SyncStatus.pendingSync => 'Pendiente de envío',
-      };
+    SyncStatus.synced => 'Sincronizado',
+    SyncStatus.pendingSync => 'Pendiente de envío',
+    SyncStatus.syncing => 'Sincronizando…',
+    SyncStatus.syncError => 'Error de sincronización',
+  };
 
+  /// Valor persistido en caché local (`toJson`).
+  String get persistValue => switch (this) {
+    SyncStatus.synced => 'synced',
+    SyncStatus.pendingSync => 'pending_sync',
+    SyncStatus.syncing => 'syncing',
+    SyncStatus.syncError => 'sync_error',
+  };
+
+  /// Valor enviado al backend en `VisitaCreate` (solo `synced` / `pending_sync`).
   String get apiValue => switch (this) {
-        SyncStatus.synced => 'synced',
-        SyncStatus.pendingSync => 'pending_sync',
-      };
+    SyncStatus.synced => 'synced',
+    SyncStatus.pendingSync => 'pending_sync',
+    SyncStatus.syncing => 'pending_sync',
+    SyncStatus.syncError => 'pending_sync',
+  };
+
+  bool get necesitaPushRemoto =>
+      this == SyncStatus.pendingSync ||
+      this == SyncStatus.syncError ||
+      this == SyncStatus.syncing;
 }
 
 extension TipoIncidenciaUi on TipoIncidencia {
   String get label => switch (this) {
-        TipoIncidencia.localCerrado => 'Local cerrado',
-        TipoIncidencia.sinStock => 'Sin stock',
-        TipoIncidencia.noCompra => 'No compra',
-        TipoIncidencia.fueraDeRuta => 'Fuera de ruta',
-        TipoIncidencia.otros => 'Otros',
-        TipoIncidencia.atencionTelefonica => 'Atención telefónica',
-      };
+    TipoIncidencia.localCerrado => 'Local cerrado',
+    TipoIncidencia.sinStock => 'Sin stock',
+    TipoIncidencia.noCompra => 'No compra',
+    TipoIncidencia.fueraDeRuta => 'Fuera de ruta',
+    TipoIncidencia.otros => 'Otros',
+    TipoIncidencia.atencionTelefonica => 'Atención telefónica',
+  };
 
   /// FastAPI enum en `VisitaCreate`: textos con espacio, no snake_case.
   String get apiValue => switch (this) {
-        TipoIncidencia.localCerrado => 'local cerrado',
-        TipoIncidencia.sinStock => 'sin stock',
-        TipoIncidencia.noCompra => 'no compra',
-        TipoIncidencia.fueraDeRuta => 'fuera de ruta',
-        TipoIncidencia.otros => 'otros',
-        TipoIncidencia.atencionTelefonica => 'atencion telefonica',
-      };
+    TipoIncidencia.localCerrado => 'local cerrado',
+    TipoIncidencia.sinStock => 'sin stock',
+    TipoIncidencia.noCompra => 'no compra',
+    TipoIncidencia.fueraDeRuta => 'fuera de ruta',
+    TipoIncidencia.otros => 'otros',
+    TipoIncidencia.atencionTelefonica => 'atencion telefonica',
+  };
 }
 
 class Visita {
@@ -115,6 +128,8 @@ class Visita {
     required this.clienteNombre,
     this.nombreFantasia,
     required this.direccion,
+    this.comuna,
+    this.rutClean,
     required this.orden,
     required this.estado,
     required this.latCliente,
@@ -134,14 +149,23 @@ class Visita {
 
   /// Identificador de fila (`VisitaResponse.id` int en API → string en app).
   final String id;
+
   /// Ruta del día (`VisitaCreate.ruta_id` / `VisitaResponse.ruta_id`).
   final int? rutaId;
+
   /// Identificador de cliente en ERP (`VisitaCreate.cliente_id` es string en API).
   final String? clienteId;
   final String clienteNombre;
+
   /// Si la API envía `nombre_fantasia`, se usa en mapa / UI cuando aplica.
   final String? nombreFantasia;
   final String direccion;
+
+  /// Comuna del cliente (`comuna` en API).
+  final String? comuna;
+
+  /// RUT sin formato (`rut_clean` en API).
+  final String? rutClean;
 
   /// Título en mapa: prioriza `nombre_fantasia`, si no `clienteNombre`.
   String get tituloMapaCliente {
@@ -149,6 +173,7 @@ class Visita {
     if (n != null && n.isNotEmpty) return n;
     return clienteNombre;
   }
+
   final int orden;
   final VisitaEstado estado;
   final TipoIncidencia? tipoIncidencia;
@@ -161,6 +186,7 @@ class Visita {
   final DateTime? fechaHoraVisita;
   final double? distanciaMetros;
   final ValidacionEstado validacionEstado;
+
   /// Evidencia local o URL remota; en POST se envía como `foto_url`.
   final String? fotoPath;
   final SyncStatus syncStatus;
@@ -188,6 +214,8 @@ class Visita {
       clienteNombre: _parseClienteNombre(json),
       nombreFantasia: _str(json, 'nombre_fantasia'),
       direccion: _parseDireccion(json),
+      comuna: _str(json, 'comuna'),
+      rutClean: _str(json, 'rut_clean', 'rutClean'),
       orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
       estado: _parseEstado(_str(json, 'estado')),
       latCliente: _parseCoord(json['lat_cliente']) ?? 0,
@@ -215,6 +243,8 @@ class Visita {
       'cliente_nombre': clienteNombre,
       if (nombreFantasia != null) 'nombre_fantasia': nombreFantasia,
       'direccion': direccion,
+      if (comuna != null) 'comuna': comuna,
+      if (rutClean != null) 'rut_clean': rutClean,
       'orden_ruta': orden,
       'estado': estado.apiValue,
       if (tipoIncidencia != null) 'tipo_incidencia': tipoIncidencia!.apiValue,
@@ -229,7 +259,7 @@ class Visita {
       if (distanciaMetros != null) 'distancia_metros': distanciaMetros,
       'validacion_estado': validacionEstado.apiValue,
       if (fotoPath != null) 'foto_path': fotoPath,
-      'sync_status': syncStatus.apiValue,
+      'sync_status': syncStatus.persistValue,
       if (localActionId != null) 'local_action_id': localActionId,
     };
   }
@@ -299,6 +329,8 @@ class Visita {
     String? clienteNombre,
     Object? nombreFantasia = _sentinel,
     String? direccion,
+    Object? comuna = _sentinel,
+    Object? rutClean = _sentinel,
     int? orden,
     VisitaEstado? estado,
     Object? tipoIncidencia = _sentinel,
@@ -318,21 +350,22 @@ class Visita {
     return Visita(
       id: id ?? this.id,
       rutaId: rutaId == _sentinel ? this.rutaId : rutaId as int?,
-      clienteId: clienteId == _sentinel
-          ? this.clienteId
-          : clienteId as String?,
+      clienteId: clienteId == _sentinel ? this.clienteId : clienteId as String?,
       clienteNombre: clienteNombre ?? this.clienteNombre,
       nombreFantasia: nombreFantasia == _sentinel
           ? this.nombreFantasia
           : nombreFantasia as String?,
       direccion: direccion ?? this.direccion,
+      comuna: comuna == _sentinel ? this.comuna : comuna as String?,
+      rutClean: rutClean == _sentinel ? this.rutClean : rutClean as String?,
       orden: orden ?? this.orden,
       estado: estado ?? this.estado,
       tipoIncidencia: tipoIncidencia == _sentinel
           ? this.tipoIncidencia
           : tipoIncidencia as TipoIncidencia?,
-      observacion:
-          observacion == _sentinel ? this.observacion : observacion as String?,
+      observacion: observacion == _sentinel
+          ? this.observacion
+          : observacion as String?,
       conCompra: conCompra == _sentinel ? this.conCompra : conCompra as bool?,
       latCliente: latCliente ?? this.latCliente,
       lonCliente: lonCliente ?? this.lonCliente,
@@ -469,10 +502,13 @@ ValidacionEstado _parseValidacion(String? s) {
 
 SyncStatus _parseSyncStatus(String? s) {
   if (s == null || s.isEmpty) return SyncStatus.synced;
-  final n = s.trim().toLowerCase();
-  if (n == 'pending_sync' || n == 'pending sync') {
-    return SyncStatus.pendingSync;
+  final n = s.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
+  if (n == 'pending_sync') return SyncStatus.pendingSync;
+  if (n == 'syncing') return SyncStatus.syncing;
+  if (n == 'sync_error' || n == 'syncerror' || n == 'error_sync') {
+    return SyncStatus.syncError;
   }
+  if (n == 'synced') return SyncStatus.synced;
   return SyncStatus.synced;
 }
 

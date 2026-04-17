@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -5,7 +7,7 @@ import '../models/visita.dart';
 import '../services/location_service.dart';
 import '../services/ruta_map_geolocator.dart';
 
-/// Mapa de la ruta: clientes (`lat_cliente` / `lon_cliente`) y vendedor (Geolocator + respaldo mock).
+/// Mapa de la ruta: marcadores simples por estado, nombre en ventana nativa.
 class ClientesRutaMap extends StatefulWidget {
   const ClientesRutaMap({
     super.key,
@@ -14,21 +16,21 @@ class ClientesRutaMap extends StatefulWidget {
     this.focusedVisitaId,
     this.height = 220,
     this.expand = false,
+    this.centerOnFirstPending = false,
   });
 
   final List<Visita> visitas;
   final LocationService locationService;
   final String? focusedVisitaId;
-  /// Altura fija cuando [expand] es false.
   final double height;
-  /// Si es true, el mapa ocupa todo el espacio disponible del padre (p. ej. pantalla completa).
   final bool expand;
+  final bool centerOnFirstPending;
 
   @override
-  State<ClientesRutaMap> createState() => _ClientesRutaMapState();
+  ClientesRutaMapState createState() => ClientesRutaMapState();
 }
 
-class _ClientesRutaMapState extends State<ClientesRutaMap> {
+class ClientesRutaMapState extends State<ClientesRutaMap> {
   GoogleMapController? _controller;
   LatLng? _userLatLng;
 
@@ -37,7 +39,7 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
   @override
   void initState() {
     super.initState();
-    _refreshUserLocation();
+    unawaited(_refreshUserLocation());
   }
 
   @override
@@ -51,7 +53,6 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
     }
   }
 
-  /// Solo reencuadra la cámara si cambian paradas o coordenadas (no en cada cambio de estado).
   static bool _visitasStopsLocationEqual(List<Visita> a, List<Visita> b) {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
@@ -86,7 +87,7 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
   }
 
   double _markerHue(VisitaEstado e) => switch (e) {
-        VisitaEstado.pendiente => BitmapDescriptor.hueGreen,
+        VisitaEstado.pendiente => BitmapDescriptor.hueYellow,
         VisitaEstado.visitado => BitmapDescriptor.hueAzure,
         VisitaEstado.incidencia => BitmapDescriptor.hueRed,
       };
@@ -102,11 +103,11 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
           markerId: MarkerId('cliente_${v.id}'),
           position: pos,
           zIndexInt: focused ? 2 : 1,
+          icon: BitmapDescriptor.defaultMarkerWithHue(_markerHue(v.estado)),
           infoWindow: InfoWindow(
             title: v.tituloMapaCliente,
-            snippet: v.direccion.isEmpty ? null : v.direccion,
+            snippet: v.estado.label,
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(_markerHue(v.estado)),
         ),
       );
     }
@@ -117,17 +118,31 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
           markerId: const MarkerId('vendedor_pos'),
           position: u,
           zIndexInt: 4,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueOrange,
+          ),
           infoWindow: const InfoWindow(title: 'Tu ubicación'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
         ),
       );
     }
     return out;
   }
 
-  /// Primera parada con coordenadas (orden de la ruta).
+  LatLng? _firstPendingClienteLatLng() {
+    final pendientes =
+        widget.visitas.where((v) => v.estado == VisitaEstado.pendiente).toList()
+          ..sort((a, b) => a.orden.compareTo(b.orden));
+    for (final v in pendientes) {
+      if (v.latCliente == 0 && v.lonCliente == 0) continue;
+      return LatLng(v.latCliente, v.lonCliente);
+    }
+    return null;
+  }
+
   LatLng? _firstClienteLatLng() {
-    for (final v in widget.visitas) {
+    final ordenados = [...widget.visitas]
+      ..sort((a, b) => a.orden.compareTo(b.orden));
+    for (final v in ordenados) {
       if (v.latCliente == 0 && v.lonCliente == 0) continue;
       return LatLng(v.latCliente, v.lonCliente);
     }
@@ -196,16 +211,60 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
     );
   }
 
+  Future<void> _onMapReady() async {
+    await _refreshUserLocation();
+    if (!mounted) return;
+    final c = _controller;
+    if (c == null) return;
+
+    if (widget.focusedVisitaId != null) {
+      await _fitCameraToMarkers();
+      await _animateToFocused();
+      return;
+    }
+
+    if (widget.centerOnFirstPending) {
+      final p = _firstPendingClienteLatLng();
+      if (p != null) {
+        await c.animateCamera(CameraUpdate.newLatLngZoom(p, 14.5));
+        return;
+      }
+    }
+
+    await _fitCameraToMarkers();
+    await _animateToFocused();
+  }
+
+  Future<void> centerOnFirstPending() async {
+    final c = _controller;
+    if (c == null || !mounted) return;
+    final p = _firstPendingClienteLatLng();
+    if (p != null) {
+      await c.animateCamera(CameraUpdate.newLatLngZoom(p, 15));
+      return;
+    }
+    await _fitCameraToMarkers();
+  }
+
+  Future<void> centerOnUserLocation() async {
+    await _refreshUserLocation();
+    if (!mounted) return;
+    final c = _controller;
+    final u = _userLatLng;
+    if (c == null || u == null) return;
+    await c.animateCamera(CameraUpdate.newLatLngZoom(u, 16));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final firstCliente = _firstClienteLatLng();
-    final initialTarget = firstCliente ?? _quito;
-    final initialZoom = firstCliente != null ? 14.0 : 12.0;
+    final firstTarget = widget.centerOnFirstPending
+        ? (_firstPendingClienteLatLng() ?? _firstClienteLatLng() ?? _quito)
+        : (_firstClienteLatLng() ?? _quito);
+    final initialZoom = firstTarget != _quito ? 14.0 : 12.0;
 
-    final radius = widget.expand ? 12.0 : 16.0;
     final map = GoogleMap(
       initialCameraPosition: CameraPosition(
-        target: initialTarget,
+        target: firstTarget,
         zoom: initialZoom,
       ),
       markers: _buildMarkers(),
@@ -215,22 +274,20 @@ class _ClientesRutaMapState extends State<ClientesRutaMap> {
       compassEnabled: true,
       onMapCreated: (controller) {
         _controller = controller;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _fitCameraToMarkers();
-          _animateToFocused();
-        });
+        WidgetsBinding.instance.addPostFrameCallback((_) => _onMapReady());
       },
     );
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: widget.expand
-          ? SizedBox.expand(child: map)
-          : SizedBox(
-              height: widget.height,
-              width: double.infinity,
-              child: map,
-            ),
-    );
+    final wrapped = widget.expand
+        ? map
+        : ClipRRect(borderRadius: BorderRadius.circular(16), child: map);
+
+    return widget.expand
+        ? SizedBox.expand(child: wrapped)
+        : SizedBox(
+            height: widget.height,
+            width: double.infinity,
+            child: wrapped,
+          );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/theme/app_colors.dart';
 import '../../core/utils/validators.dart';
 import '../../features/admin/screens/admin_home_screen.dart';
 import '../../features/bodega/screens/bodega_home_screen.dart';
@@ -70,6 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final colorScheme = theme.colorScheme;
 
     return Scaffold(
+      backgroundColor: AppColors.surface,
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -82,17 +84,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 24),
-                    Icon(
-                      Icons.local_shipping_rounded,
-                      size: 56,
-                      color: colorScheme.primary,
+                    Center(
+                      child: Image.asset(
+                        'assets/images/logo_login.png',
+                        height: 120,
+                        fit: BoxFit.contain,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Text(
                       AppConstants.appName,
                       textAlign: TextAlign.center,
                       style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.secondary,
                       ),
                     ),
                     const SizedBox(height: 8),

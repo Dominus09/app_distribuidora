@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../auth_navigation.dart';
 import '../services/auth_service.dart';
 
@@ -50,6 +51,7 @@ class _AppStartGateState extends State<AppStartGate> {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
+      backgroundColor: AppColors.surface,
       body: Center(child: CircularProgressIndicator()),
     );
   }

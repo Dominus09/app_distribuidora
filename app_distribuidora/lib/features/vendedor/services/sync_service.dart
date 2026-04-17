@@ -1,155 +1,269 @@
+import 'dart:async';
+
 import '../models/visita.dart';
 import 'api_service.dart';
 
-/// Resultado de una pasada de sincronización con el backend.
+const Duration _kRegistrarTimeout = Duration(seconds: 25);
+
+/// Resultado de una pasada de sincronización forzada (varios registros).
 class SyncBatchResult {
   const SyncBatchResult({
     required this.visitas,
-    required this.newlySyncedCount,
-    required this.skippedDuplicatesCount,
-    required this.stillPendingCount,
+    required this.syncedCount,
+    required this.omittedCount,
+    required this.errorCount,
+    required this.pendingAfterCount,
+    required this.syncErrorAfterCount,
     this.duplicateRun = false,
-    this.errorMessage,
+    this.blockedMessage,
   });
 
   final List<Visita> visitas;
-  final int newlySyncedCount;
-  final int skippedDuplicatesCount;
-  final int stillPendingCount;
+  final int syncedCount;
+  final int omittedCount;
+  final int errorCount;
+  final int pendingAfterCount;
+  final int syncErrorAfterCount;
   final bool duplicateRun;
-  final String? errorMessage;
+  final String? blockedMessage;
 }
 
 /// Sincronización con API + idempotencia local por `localActionId`.
 class SyncService {
   final Set<String> _processedActionIds = <String>{};
-  bool _syncInProgress = false;
+  bool _outboundBusy = false;
 
   void acknowledgeActionProcessed(String actionId) {
     _processedActionIds.add(actionId);
   }
 
-  /// Envía pendientes a POST `/visitas/sync` (`SyncResponse`: contadores, sin lista de visitas).
+  List<Visita> normalizeStuckSyncing(List<Visita> source) {
+    return source
+        .map(
+          (v) => v.syncStatus == SyncStatus.syncing
+              ? v.copyWith(syncStatus: SyncStatus.pendingSync)
+              : v,
+        )
+        .toList();
+  }
+
+  bool _needsForceQueue(SyncStatus s) =>
+      s == SyncStatus.pendingSync || s == SyncStatus.syncError;
+
+  Visita _mergeServerResponse(Visita local, Visita fromServer) {
+    return fromServer.copyWith(
+      syncStatus: SyncStatus.synced,
+      localActionId: local.localActionId,
+    );
+  }
+
+  bool _isDuplicateHttp(ApiHttpException e) {
+    if (e.statusCode == 409) return true;
+    final b = e.body.toLowerCase();
+    return b.contains('duplic') ||
+        b.contains('duplicate') ||
+        b.contains('ya existe') ||
+        b.contains('already exists') ||
+        b.contains('omitido');
+  }
+
+  /// Tras guardar en local, intenta un POST si hay conectividad de app; el caller debe hacer `pingReachable` antes si lo desea.
+  Future<List<Visita>> trySyncVisitaAfterLocalSave(
+    List<Visita> source,
+    String visitaId,
+    ApiService api,
+  ) async {
+    if (_outboundBusy) return List<Visita>.from(source);
+
+    var list = normalizeStuckSyncing(List<Visita>.from(source));
+    final idx = list.indexWhere((v) => v.id == visitaId);
+    if (idx < 0) return list;
+
+    var v = list[idx];
+    if (!_needsForceQueue(v.syncStatus) && v.syncStatus != SyncStatus.syncing) {
+      return list;
+    }
+    if (v.syncStatus == SyncStatus.syncing) {
+      v = v.copyWith(syncStatus: SyncStatus.pendingSync);
+      list[idx] = v;
+    }
+
+    final lid = v.localActionId;
+    if (lid == null || lid.isEmpty || !v.puedeEnviarseAlBackend) {
+      return list;
+    }
+    if (_processedActionIds.contains(lid)) {
+      list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+      return list;
+    }
+
+    _outboundBusy = true;
+    try {
+      list[idx] = v.copyWith(syncStatus: SyncStatus.syncing);
+      v = list[idx];
+
+      try {
+        final saved = await api
+            .registrarVisita(v)
+            .timeout(_kRegistrarTimeout);
+        _processedActionIds.add(lid);
+        list[idx] = _mergeServerResponse(v, saved);
+      } on ApiHttpException catch (e) {
+        if (_isDuplicateHttp(e)) {
+          _processedActionIds.add(lid);
+          list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+        } else {
+          list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+        }
+      } on TimeoutException {
+        list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+      } on FormatException {
+        list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+      } catch (_) {
+        list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+      }
+      return list;
+    } finally {
+      _outboundBusy = false;
+    }
+  }
+
+  /// Envía uno a uno los pendientes con error o pendientes de envío (no reenvía `synced`).
   Future<SyncBatchResult> forceSyncPending(
     List<Visita> source,
     ApiService api,
   ) async {
-    if (_syncInProgress) {
+    if (_outboundBusy) {
+      final list = List<Visita>.from(source);
       return SyncBatchResult(
-        visitas: List<Visita>.from(source),
-        newlySyncedCount: 0,
-        skippedDuplicatesCount: 0,
-        stillPendingCount:
-            source.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
+        visitas: list,
+        syncedCount: 0,
+        omittedCount: 0,
+        errorCount: 0,
+        pendingAfterCount: list.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
+        syncErrorAfterCount: list.where((v) => v.syncStatus == SyncStatus.syncError).length,
         duplicateRun: true,
       );
     }
 
-    final pending =
-        source.where((v) => v.syncStatus == SyncStatus.pendingSync).toList();
-    if (pending.isEmpty) {
+    var list = normalizeStuckSyncing(List<Visita>.from(source));
+
+    final queue = list
+        .where((v) => _needsForceQueue(v.syncStatus))
+        .toList();
+
+    if (queue.isEmpty) {
       return SyncBatchResult(
-        visitas: List<Visita>.from(source),
-        newlySyncedCount: 0,
-        skippedDuplicatesCount: 0,
-        stillPendingCount: 0,
+        visitas: list,
+        syncedCount: 0,
+        omittedCount: 0,
+        errorCount: 0,
+        pendingAfterCount:
+            list.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
+        syncErrorAfterCount:
+            list.where((v) => v.syncStatus == SyncStatus.syncError).length,
       );
     }
 
-    _syncInProgress = true;
-    try {
-      var skippedDup = 0;
-      final toSend = <Visita>[];
+    final ready = queue.where((v) => v.puedeEnviarseAlBackend).toList();
+    final notReady = queue.where((v) => !v.puedeEnviarseAlBackend).toList();
 
-      for (final v in pending) {
-        final id = v.localActionId;
-        if (id == null || id.isEmpty) {
-          continue;
-        }
-        if (!v.puedeEnviarseAlBackend) {
-          return SyncBatchResult(
-            visitas: List<Visita>.from(source),
-            newlySyncedCount: 0,
-            skippedDuplicatesCount: 0,
-            stillPendingCount:
-                source.where((x) => x.syncStatus == SyncStatus.pendingSync).length,
-            errorMessage:
-                'Una o más visitas pendientes no tienen ruta_id u orden válidos para sincronizar. '
+    if (ready.isEmpty) {
+      return SyncBatchResult(
+        visitas: list,
+        syncedCount: 0,
+        omittedCount: 0,
+        errorCount: 0,
+        pendingAfterCount:
+            list.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
+        syncErrorAfterCount:
+            list.where((v) => v.syncStatus == SyncStatus.syncError).length,
+        blockedMessage: notReady.isEmpty
+            ? null
+            : 'Hay ${notReady.length} registro(s) pendiente(s) sin datos de ruta válidos. '
                 'Vuelve a cargar la ruta desde el servidor.',
-          );
-        }
-        if (_processedActionIds.contains(id)) {
-          skippedDup++;
+      );
+    }
+
+    _outboundBusy = true;
+    var synced = 0;
+    var omitted = 0;
+    var errors = 0;
+
+    try {
+      for (final target in ready) {
+        final idx = list.indexWhere((v) => v.id == target.id);
+        if (idx < 0) continue;
+        var v = list[idx];
+        if (!_needsForceQueue(v.syncStatus)) continue;
+
+        final lid = v.localActionId;
+        if (lid == null || lid.isEmpty) continue;
+
+        if (_processedActionIds.contains(lid)) {
+          list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+          omitted++;
           continue;
         }
-        toSend.add(v);
-      }
 
-      if (toSend.isEmpty) {
-        final repaired = source.map(_ensureSyncedIfProcessed).toList();
-        return SyncBatchResult(
-          visitas: repaired,
-          newlySyncedCount: 0,
-          skippedDuplicatesCount: skippedDup,
-          stillPendingCount:
-              repaired.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
-        );
-      }
+        list[idx] = v.copyWith(syncStatus: SyncStatus.syncing);
+        v = list[idx];
 
-      final result = await api.syncVisitas(toSend);
-
-      if (result.errores > 0) {
-        return SyncBatchResult(
-          visitas: List<Visita>.from(source),
-          newlySyncedCount: 0,
-          skippedDuplicatesCount: skippedDup,
-          stillPendingCount:
-              source.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
-          errorMessage:
-              'El servidor reportó ${result.errores} error(es). '
-              'Sincronizados: ${result.sincronizados}, omitidos: ${result.omitidos}.',
-        );
-      }
-
-      for (final v in toSend) {
-        final lid = v.localActionId;
-        if (lid != null) _processedActionIds.add(lid);
-      }
-
-      final byId = {for (final v in source) v.id: v};
-      for (final sent in toSend) {
-        final cur = byId[sent.id];
-        if (cur != null) {
-          byId[sent.id] = cur.copyWith(syncStatus: SyncStatus.synced);
+        try {
+          final saved = await api
+              .registrarVisita(v)
+              .timeout(_kRegistrarTimeout);
+          _processedActionIds.add(lid);
+          list[idx] = _mergeServerResponse(v, saved);
+          synced++;
+        } on ApiHttpException catch (e) {
+          if (_isDuplicateHttp(e)) {
+            _processedActionIds.add(lid);
+            list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+            omitted++;
+          } else {
+            list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+            errors++;
+          }
+        } on TimeoutException {
+          list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+          errors++;
+        } on FormatException {
+          list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+          errors++;
+        } catch (_) {
+          list[idx] = v.copyWith(syncStatus: SyncStatus.syncError);
+          errors++;
         }
       }
-      final merged = byId.values.toList()
-        ..sort((a, b) => a.orden.compareTo(b.orden));
+
+      list = list.map(_ensureSyncedIfProcessed).toList();
+
+      final pendingAfter =
+          list.where((v) => v.syncStatus == SyncStatus.pendingSync).length;
+      final errAfter =
+          list.where((v) => v.syncStatus == SyncStatus.syncError).length;
 
       return SyncBatchResult(
-        visitas: merged,
-        newlySyncedCount: result.sincronizados,
-        skippedDuplicatesCount: skippedDup + result.omitidos,
-        stillPendingCount:
-            merged.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
-      );
-    } catch (e) {
-      return SyncBatchResult(
-        visitas: List<Visita>.from(source),
-        newlySyncedCount: 0,
-        skippedDuplicatesCount: 0,
-        stillPendingCount:
-            source.where((v) => v.syncStatus == SyncStatus.pendingSync).length,
-        errorMessage: e.toString(),
+        visitas: list,
+        syncedCount: synced,
+        omittedCount: omitted,
+        errorCount: errors,
+        pendingAfterCount: pendingAfter,
+        syncErrorAfterCount: errAfter,
+        blockedMessage: notReady.isEmpty
+            ? null
+            : '${notReady.length} registro(s) no se intentaron enviar (falta ruta u orden). '
+                'Recarga la ruta y reintenta.',
       );
     } finally {
-      _syncInProgress = false;
+      _outboundBusy = false;
     }
   }
 
   Visita _ensureSyncedIfProcessed(Visita v) {
     final id = v.localActionId;
-    if (v.syncStatus == SyncStatus.pendingSync &&
+    if (_needsForceQueue(v.syncStatus) &&
         id != null &&
         _processedActionIds.contains(id)) {
       return v.copyWith(syncStatus: SyncStatus.synced);

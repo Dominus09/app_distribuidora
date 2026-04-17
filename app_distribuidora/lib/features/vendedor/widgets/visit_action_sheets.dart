@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/visita.dart';
@@ -8,8 +9,22 @@ import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../utils/incidencia_photo.dart';
 
-/// Distancia máxima permitida para marcar visitado con GPS en línea (metros).
-const double kMaxDistanceVisitadoMetros = 300;
+/// Distancia máxima permitida para marcar visitado con GPS (metros).
+/// No aplica a incidencias ni a atención telefónica.
+const double kMaxDistanceVisitadoMetros = 500;
+
+/// Distancia usuario → cliente para validar “visitado” ([Geolocator.distanceBetween]).
+double _distanceMetrosVisitadoUsuarioACliente(
+  LocationSnapshot snap,
+  Visita visita,
+) {
+  return Geolocator.distanceBetween(
+    snap.latitude,
+    snap.longitude,
+    visita.latCliente,
+    visita.lonCliente,
+  );
+}
 
 /// Bottom sheet: flujo "visitado" con compra / sin compra y validación mock GPS.
 Future<Visita?> showVisitadoFlowSheet({
@@ -116,8 +131,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           return;
         }
 
-        final d = widget.locationService.distanceToCliente(snap!, widget.visita);
-        // Sin red: la distancia queda referencial; >300 m se deja para validar al sincronizar.
+        final d = _distanceMetrosVisitadoUsuarioACliente(snap!, widget.visita);
+        // Sin red: la distancia queda referencial; >500 m se deja para validar al sincronizar.
         final validacion = d > kMaxDistanceVisitadoMetros
             ? ValidacionEstado.pendienteValidacion
             : ValidacionEstado.offline;
@@ -154,11 +169,9 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         return;
       }
 
-      final d = widget.locationService.distanceToCliente(snap!, widget.visita);
+      final d = _distanceMetrosVisitadoUsuarioACliente(snap!, widget.visita);
       if (d > kMaxDistanceVisitadoMetros) {
-        _toast(
-          'Debes estar a máximo 300 metros del cliente para marcar como visitado.',
-        );
+        _toast('No estás dentro del rango del cliente (500m)');
         return;
       }
 
@@ -177,21 +190,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         localActionId: actionId,
       );
 
-      try {
-        final guardada = await widget.apiService.registrarVisita(paraEnviar);
-        if (!mounted) return;
-        widget.syncService.acknowledgeActionProcessed(actionId);
-        Navigator.of(context).pop(
-          guardada.copyWith(
-            syncStatus: SyncStatus.synced,
-            localActionId: actionId,
-          ),
-        );
-      } catch (_) {
-        if (!mounted) return;
-        _toast('Sin conexión, se guardará para sincronizar');
-        Navigator.of(context).pop(paraEnviar);
-      }
+      if (!mounted) return;
+      Navigator.of(context).pop(paraEnviar);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -286,7 +286,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           Text(
             offline
                 ? 'Sin conexión: se guardará localmente y se sincronizará después.'
-                : 'En línea con GPS: se valida distancia máxima 300 m. Sin GPS: la validación queda pendiente hasta sincronizar.',
+                : 'En línea con GPS: se valida distancia máxima 500 m. Sin GPS: la validación queda pendiente hasta sincronizar.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -311,7 +311,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
   }
 }
 
-/// Bottom sheet: registro de incidencia con tipo, observación y evidencia (cámara / galería).
+/// Bottom sheet: registro de incidencia con tipo, observación opcional y evidencia obligatoria.
 Future<Visita?> showIncidenciaFlowSheet({
   required BuildContext context,
   required Visita visita,
@@ -377,25 +377,10 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
   /// Error de validación al pulsar Guardar; se muestra en el propio sheet.
   String? _validationError;
 
-  @override
-  void initState() {
-    super.initState();
-    _obsCtrl.addListener(_onObservacionChanged);
-  }
-
-  static const _msgObsRequerida = 'La observación es obligatoria.';
-
-  void _onObservacionChanged() {
-    if (!mounted || _validationError == null) return;
-    if (_validationError == _msgObsRequerida &&
-        _obsCtrl.text.trim().isNotEmpty) {
-      setState(() => _validationError = null);
-    }
-  }
+  static const _msgEvidenciaRequerida = 'Debes subir evidencia';
 
   @override
   void dispose() {
-    _obsCtrl.removeListener(_onObservacionChanged);
     _obsCtrl.dispose();
     super.dispose();
   }
@@ -427,17 +412,12 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
     if (!mounted) return;
     setState(() => _validationError = null);
 
-    final obs = _obsCtrl.text.trim();
-    if (obs.isEmpty) {
-      setState(() {
-        _validationError = _msgObsRequerida;
-      });
-      return;
-    }
+    final obsTrim = _obsCtrl.text.trim();
+    final observacion = obsTrim.isEmpty ? null : obsTrim;
     final foto = _fotoPath?.trim();
     if (foto == null || foto.isEmpty) {
       setState(() {
-        _validationError = 'Debe subir evidencia antes de guardar';
+        _validationError = _msgEvidenciaRequerida;
       });
       return;
     }
@@ -476,7 +456,7 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
       final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.incidencia,
         tipoIncidencia: _tipo,
-        observacion: obs,
+        observacion: observacion,
         conCompra: null,
         latVisita: telefonica ? null : snap?.latitude,
         lonVisita: telefonica ? null : snap?.longitude,
@@ -493,21 +473,8 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
         return;
       }
 
-      try {
-        final guardada = await widget.apiService.registrarVisita(paraEnviar);
-        if (!mounted) return;
-        widget.syncService.acknowledgeActionProcessed(actionId);
-        Navigator.of(context).pop(
-          guardada.copyWith(
-            syncStatus: SyncStatus.synced,
-            localActionId: actionId,
-          ),
-        );
-      } catch (_) {
-        if (!mounted) return;
-        _toast('Sin conexión, se guardará para sincronizar');
-        Navigator.of(context).pop(paraEnviar);
-      }
+      if (!mounted) return;
+      Navigator.of(context).pop(paraEnviar);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -567,11 +534,11 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
           const SizedBox(height: 16),
           TextField(
             controller: _obsCtrl,
-            minLines: 3,
+            minLines: 2,
             maxLines: 6,
             decoration: const InputDecoration(
-              labelText: 'Observación',
-              hintText: 'Describe qué ocurrió en el punto de venta',
+              labelText: 'Observación (opcional)',
+              hintText: 'Si quieres, añade detalle de lo ocurrido',
             ),
           ),
           const SizedBox(height: 16),
@@ -655,7 +622,7 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
           if (_tipo == TipoIncidencia.atencionTelefonica) ...[
             const SizedBox(height: 8),
             Text(
-              'Debe subir evidencia del contacto (llamada o WhatsApp)',
+              'Ej.: captura de llamada, WhatsApp u otro contacto.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
                 color: theme.colorScheme.secondary,

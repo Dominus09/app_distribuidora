@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -23,6 +24,25 @@ class ApiService {
   ApiService({http.Client? httpClient}) : _client = httpClient ?? http.Client();
 
   final http.Client _client;
+
+  /// Comprueba que el servidor API responde (internet real, no solo interfaz activa).
+  /// Usa OpenAPI de FastAPI; tolera 3xx–4xx como “alcanzable” (red y DNS OK).
+  Future<bool> pingReachable({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final uri = _uri('openapi.json');
+    try {
+      final resp = await _client
+          .get(
+            uri,
+            headers: {'Accept': 'application/json'},
+          )
+          .timeout(timeout);
+      return resp.statusCode < 500;
+    } on Object {
+      return false;
+    }
+  }
 
   Uri _uri(String path, [Map<String, String>? query]) {
     final base = ApiConfig.baseUrl.endsWith('/')
