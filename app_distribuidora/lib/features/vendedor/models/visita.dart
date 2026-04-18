@@ -131,6 +131,8 @@ class Visita {
     required this.direccion,
     this.comuna,
     this.rutClean,
+    /// Día en que el cliente entra en ruta (API `dia_operativo`; antes `dia_atencion`).
+    this.diaOperativo,
     required this.orden,
     required this.estado,
     required this.latCliente,
@@ -167,6 +169,9 @@ class Visita {
 
   /// RUT sin formato (`rut_clean` en API).
   final String? rutClean;
+
+  /// Día operativo de la parada (ej. `Sábado`). Si es null, la visita cuenta para cualquier día (datos viejos sin campo).
+  final String? diaOperativo;
 
   /// Título en mapa: prioriza `nombre_fantasia`, si no `clienteNombre`.
   String get tituloMapaCliente {
@@ -220,6 +225,38 @@ class Visita {
   /// Solo paradas pendientes admiten marcar visitado / incidencia de nuevo.
   bool get puedeEditarse => estado == VisitaEstado.pendiente;
 
+  /// Nombre del día de la semana en español (lunes = 1 … domingo = 7, [DateTime.weekday]).
+  static String nombreDiaCalendario(DateTime fecha) {
+    const nombres = <String>[
+      'Lunes',
+      'Martes',
+      'Miércoles',
+      'Jueves',
+      'Viernes',
+      'Sábado',
+      'Domingo',
+    ];
+    return nombres[fecha.weekday - 1];
+  }
+
+  static String _normDiaOperativo(String s) {
+    var t = s.trim().toLowerCase();
+    const from = 'áéíóúüñ';
+    const to = 'aeiouun';
+    for (var i = 0; i < from.length; i++) {
+      t = t.replaceAll(from[i], to[i]);
+    }
+    return t;
+  }
+
+  /// Compara [diaOperativo] del backend con el día calendario (tolerante a tildes / mayúsculas).
+  bool coincideDiaOperativoConCalendario(DateTime fechaCalendario) {
+    final raw = diaOperativo;
+    if (raw == null || raw.trim().isEmpty) return true;
+    return _normDiaOperativo(raw) ==
+        _normDiaOperativo(nombreDiaCalendario(fechaCalendario));
+  }
+
   factory Visita.fromJson(Map<String, dynamic> json) {
     final idVal = json['id'];
     final id = idVal == null ? '' : idVal.toString();
@@ -233,6 +270,7 @@ class Visita {
       direccion: _parseDireccion(json),
       comuna: _str(json, 'comuna'),
       rutClean: _str(json, 'rut_clean', 'rutClean'),
+      diaOperativo: _parseDiaOperativo(json),
       orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
       estado: _parseEstado(_str(json, 'estado')),
       latCliente: _parseCoord(json['lat_cliente']) ?? 0,
@@ -262,6 +300,7 @@ class Visita {
       'direccion': direccion,
       if (comuna != null) 'comuna': comuna,
       if (rutClean != null) 'rut_clean': rutClean,
+      if (diaOperativo != null) 'dia_operativo': diaOperativo,
       'orden_ruta': orden,
       'estado': estado.apiValue,
       if (tipoIncidencia != null) 'tipo_incidencia': tipoIncidencia!.apiValue,
@@ -356,6 +395,7 @@ class Visita {
     String? direccion,
     Object? comuna = _sentinel,
     Object? rutClean = _sentinel,
+    Object? diaOperativo = _sentinel,
     int? orden,
     VisitaEstado? estado,
     Object? tipoIncidencia = _sentinel,
@@ -383,6 +423,9 @@ class Visita {
       direccion: direccion ?? this.direccion,
       comuna: comuna == _sentinel ? this.comuna : comuna as String?,
       rutClean: rutClean == _sentinel ? this.rutClean : rutClean as String?,
+      diaOperativo: diaOperativo == _sentinel
+          ? this.diaOperativo
+          : diaOperativo as String?,
       orden: orden ?? this.orden,
       estado: estado ?? this.estado,
       tipoIncidencia: tipoIncidencia == _sentinel
@@ -454,6 +497,14 @@ String _parseDireccion(Map<String, dynamic> json) {
     if (s != null && s.isNotEmpty) return s;
   }
   return '';
+}
+
+/// `dia_operativo` sustituye a `dia_atencion`; se aceptan ambos por compatibilidad.
+String? _parseDiaOperativo(Map<String, dynamic> json) {
+  final v = json['dia_operativo'] ?? json['dia_atencion'];
+  if (v == null) return null;
+  final s = v.toString().trim();
+  return s.isEmpty ? null : s;
 }
 
 String? _parseClienteId(dynamic v) {

@@ -168,28 +168,47 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     return '$y-$m-$day';
   }
 
-  int get _totalClientes => _visitas.length;
+  /// Paradas cuyo [Visita.diaOperativo] coincide con el día calendario actual (hoy en el dispositivo).
+  /// La lista completa sigue en [_visitas] (caché, sync, pendientes de otros días).
+  List<Visita> get _visitasVistaOperativa {
+    final ref = DateTime.now();
+    return _visitas
+        .where((v) => v.coincideDiaOperativoConCalendario(ref))
+        .toList();
+  }
+
+  int get _totalClientes => _visitasVistaOperativa.length;
 
   int get _pendientes =>
-      _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
+      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.pendiente).length;
 
   int get _visitados =>
-      _visitas.where((v) => v.estado == VisitaEstado.visitado).length;
+      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.visitado).length;
 
   int get _incidencias =>
-      _visitas.where((v) => v.estado == VisitaEstado.incidencia).length;
+      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.incidencia).length;
 
   /// Paradas ya registradas (visitado o incidencia); coherente con barra y cierre de ruta.
   int get _clientesAtendidos =>
       _totalClientes -
-      _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
+      _visitasVistaOperativa
+          .where((v) => v.estado == VisitaEstado.pendiente)
+          .length;
+
+  /// Fusiona actualizaciones desde la ruta (subconjunto del día) en la lista completa por `id`.
+  static List<Visita> _mergeVisitasPorId(List<Visita> base, List<Visita> updates) {
+    if (updates.isEmpty) return List<Visita>.from(base);
+    final fresh = <String, Visita>{for (final u in updates) u.id: u};
+    return [for (final b in base) fresh[b.id] ?? b];
+  }
 
   void _setVisitas(List<Visita> next) {
+    final merged = _mergeVisitasPorId(_visitas, next);
     setState(() {
-      _visitas = next;
-      _rutaFuture = Future<List<Visita>>.value(next);
+      _visitas = merged;
+      _rutaFuture = Future<List<Visita>>.value(merged);
     });
-    unawaited(_vendedorService.persistVisitasToDisk(next));
+    unawaited(_vendedorService.persistVisitasToDisk(merged));
   }
 
   void _iniciarRuta() {
@@ -287,7 +306,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => RutaScreen(
-          visitas: _visitas,
+          visitas: List<Visita>.from(_visitasVistaOperativa),
           attemptRemoteSave: _attemptRemoteSave,
           locationService: _locationService,
           vendedorService: _vendedorService,
@@ -517,7 +536,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Día de atención: ${_diaSemana(ahora)}',
+                  'Día operativo: ${Visita.nombreDiaCalendario(ahora)}',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurfaceVariant,
@@ -850,18 +869,6 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     return '${d.day} de ${meses[d.month - 1]} de ${d.year}';
   }
 
-  static String _diaSemana(DateTime d) {
-    const nombres = [
-      'Lunes',
-      'Martes',
-      'Miércoles',
-      'Jueves',
-      'Viernes',
-      'Sábado',
-      'Domingo',
-    ];
-    return nombres[d.weekday - 1];
-  }
 }
 
 class _ResumenDiaTile extends StatelessWidget {

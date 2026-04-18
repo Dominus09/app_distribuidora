@@ -346,6 +346,12 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
                     'Razón social / nombre',
                     v.clienteNombre,
                   ),
+                  if (v.diaOperativo != null && v.diaOperativo!.trim().isNotEmpty)
+                    _filaCompacta(
+                      context,
+                      'Día operativo',
+                      v.diaOperativo!.trim(),
+                    ),
                   if (v.tipoIncidencia != null)
                     _filaCompacta(
                       context,
