@@ -192,8 +192,24 @@ class Visita {
   final SyncStatus syncStatus;
   final String? localActionId;
 
-  /// True si se puede armar un `VisitaCreate` para POST /visitas o /visitas/sync.
+  /// `id` numérico de la fila en backend (GET ruta). Sin esto no se debe POST (evita duplicados).
+  bool get tieneIdBackend {
+    final t = id.trim();
+    if (t.isEmpty) return false;
+    final n = int.tryParse(t);
+    return n != null && n >= 1;
+  }
+
+  /// `id` como entero para el JSON de API, o `null` si no es válido.
+  int? get idBackendEntero {
+    final n = int.tryParse(id.trim());
+    if (n == null || n < 1) return null;
+    return n;
+  }
+
+  /// True si se puede armar el cuerpo para POST /visitas o /visitas/sync (misma visita, no alta nueva).
   bool get puedeEnviarseAlBackend =>
+      tieneIdBackend &&
       localActionId != null &&
       localActionId!.isNotEmpty &&
       rutaId != null &&
@@ -286,7 +302,15 @@ class Visita {
       throw StateError('Visita.toJsonForApiCreate: falta cliente_id');
     }
 
+    final vid = idBackendEntero;
+    if (vid == null) {
+      throw StateError(
+        'Visita.toJsonForApiCreate: falta id de visita del backend (evita crear duplicados)',
+      );
+    }
+
     final out = <String, dynamic>{
+      'id': vid,
       'local_action_id': lid,
       'ruta_id': rid,
       'cliente_id': cid,

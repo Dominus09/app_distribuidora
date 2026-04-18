@@ -422,14 +422,18 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
-        toolbarHeight: 56,
-        title: Center(
+        automaticallyImplyLeading: false,
+        centerTitle: false,
+        leadingWidth: 52,
+        leading: Padding(
+          padding: const EdgeInsets.all(8),
           child: Image.asset(
             'assets/images/logo_small.png',
-            height: 40,
+            height: 30,
             fit: BoxFit.contain,
           ),
         ),
+        title: const Text('Inicio'),
         actions: [
           TextButton(
             onPressed: _cerrarSesion,

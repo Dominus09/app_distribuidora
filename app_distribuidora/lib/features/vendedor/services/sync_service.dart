@@ -51,9 +51,11 @@ class SyncService {
       s == SyncStatus.pendingSync || s == SyncStatus.syncError;
 
   Visita _mergeServerResponse(Visita local, Visita fromServer) {
+    final sid = fromServer.id.trim();
     return fromServer.copyWith(
       syncStatus: SyncStatus.synced,
       localActionId: local.localActionId,
+      id: sid.isNotEmpty ? fromServer.id : local.id,
     );
   }
 
@@ -180,8 +182,8 @@ class SyncService {
             list.where((v) => v.syncStatus == SyncStatus.syncError).length,
         blockedMessage: notReady.isEmpty
             ? null
-            : 'Hay ${notReady.length} registro(s) pendiente(s) sin datos de ruta válidos. '
-                'Vuelve a cargar la ruta desde el servidor.',
+            : 'Hay ${notReady.length} registro(s) que no se pueden enviar (falta id de visita, '
+                'ruta u orden). Vuelve a cargar la ruta desde el servidor.',
       );
     }
 
@@ -253,7 +255,7 @@ class SyncService {
         syncErrorAfterCount: errAfter,
         blockedMessage: notReady.isEmpty
             ? null
-            : '${notReady.length} registro(s) no se intentaron enviar (falta ruta u orden). '
+            : '${notReady.length} registro(s) no se intentaron enviar (falta id de visita, ruta u orden). '
                 'Recarga la ruta y reintenta.',
       );
     } finally {

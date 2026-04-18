@@ -451,7 +451,23 @@ class _RutaScreenState extends State<RutaScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ruta del día'),
+        centerTitle: false,
+        title: Row(
+          children: [
+            Image.asset(
+              'assets/images/logo_small.png',
+              height: 30,
+              fit: BoxFit.contain,
+            ),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'Ruta del día',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton.icon(
             onPressed: () => _abrirMapa(),

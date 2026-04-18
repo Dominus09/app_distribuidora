@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/config/api_config.dart';
 import '../models/visita.dart';
+import 'visitas_api_payload.dart';
 
 /// Respuesta de POST `/app_distribuidora/visitas/sync` (`SyncResponse` en OpenAPI).
 class SyncApiResult {
@@ -108,16 +109,18 @@ class ApiService {
     );
   }
 
-  /// POST `/visitas` — cuerpo `VisitaCreate`; respuesta `VisitaAltaResponse`.
+  /// POST `/visitas` — actualización de visita existente (`id` obligatorio en cuerpo).
   Future<Visita> registrarVisita(Visita visita) async {
     final uri = _uri('visitas');
+    final raw = visita.toJsonForApiCreate();
+    final requestBody = await appendFotoBase64IfPlatformSupported(raw, visita);
     final resp = await _client.post(
       uri,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: jsonEncode(visita.toJsonForApiCreate()),
+      body: jsonEncode(requestBody),
     );
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw ApiHttpException(resp.statusCode, resp.body);
@@ -125,11 +128,11 @@ class ApiService {
     if (resp.body.isEmpty) {
       return visita;
     }
-    final body = jsonDecode(resp.body);
-    if (body is! Map) {
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! Map) {
       return visita;
     }
-    final m = Map<String, dynamic>.from(body);
+    final m = Map<String, dynamic>.from(decoded);
     final data = m['data'];
     if (data is Map) {
       return Visita.fromJson(Map<String, dynamic>.from(data));
@@ -143,9 +146,12 @@ class ApiService {
   /// POST `/visitas/sync` — cuerpo `SyncRequest`; respuesta `SyncResponse` (solo contadores).
   Future<SyncApiResult> syncVisitas(List<Visita> visitas) async {
     final uri = _uri('visitas/sync');
-    final payload = {
-      'visitas': visitas.map((v) => v.toJsonForApiCreate()).toList(),
-    };
+    final list = <Map<String, dynamic>>[];
+    for (final v in visitas) {
+      final raw = v.toJsonForApiCreate();
+      list.add(await appendFotoBase64IfPlatformSupported(raw, v));
+    }
+    final payload = {'visitas': list};
     final resp = await _client.post(
       uri,
       headers: {
