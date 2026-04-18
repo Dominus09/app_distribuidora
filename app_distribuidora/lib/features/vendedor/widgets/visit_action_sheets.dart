@@ -45,17 +45,20 @@ Future<Visita?> showVisitadoFlowSheet({
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
     builder: (ctx) {
-      return Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(ctx).bottom,
-        ),
-        child: _VisitadoSheetBody(
-          visita: visita,
-          attemptRemoteSave: attemptRemoteSave,
-          apiService: apiService,
-          locationService: locationService,
-          vendedorService: vendedorService,
-          syncService: syncService,
+      // Scaffold propio: el SnackBar se muestra sobre el modal (no queda oculto bajo la hoja).
+      return Scaffold(
+        body: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+          ),
+          child: _VisitadoSheetBody(
+            visita: visita,
+            attemptRemoteSave: attemptRemoteSave,
+            apiService: apiService,
+            locationService: locationService,
+            vendedorService: vendedorService,
+            syncService: syncService,
+          ),
         ),
       );
     },
@@ -87,6 +90,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
   bool? _conCompra;
   final _obsCtrl = TextEditingController();
   bool _busy = false;
+  /// Error de distancia (en línea + GPS); visible en el sheet sin cerrar el modal.
+  String? _distanceError;
 
   @override
   void dispose() {
@@ -100,7 +105,10 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
       return;
     }
 
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _distanceError = null;
+    });
     try {
       final actionId = widget.vendedorService.generateLocalActionId();
       final gpsOk = await widget.locationService.isGpsAvailable();
@@ -171,7 +179,15 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
 
       final d = _distanceMetrosVisitadoUsuarioACliente(snap!, widget.visita);
       if (d > kMaxDistanceVisitadoMetros) {
-        _toast('No estás dentro del rango del cliente (500m)');
+        if (mounted) {
+          setState(() => _distanceError = 'No estás dentro del rango (500m)');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No estás dentro del rango (500m)'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
         return;
       }
 
@@ -209,6 +225,9 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
     required ValidacionEstado validacion,
     required SyncStatus sync,
   }) {
+    if (mounted) {
+      setState(() => _distanceError = null);
+    }
     final actualizada = widget.visita.copyWith(
       estado: estado,
       conCompra: conCompra,
@@ -269,7 +288,10 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
               ButtonSegment(value: false, label: Text('Sin compra')),
             ],
             selected: _conCompra != null ? {_conCompra!} : {},
-            onSelectionChanged: (s) => setState(() => _conCompra = s.first),
+            onSelectionChanged: (s) => setState(() {
+              _conCompra = s.first;
+              _distanceError = null;
+            }),
             emptySelectionAllowed: true,
           ),
           const SizedBox(height: 20),
@@ -291,6 +313,37 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          if (_distanceError != null) ...[
+            const SizedBox(height: 12),
+            Material(
+              color: theme.colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.location_off_outlined,
+                      color: theme.colorScheme.onErrorContainer,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _distanceError!,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.w700,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           FilledButton(
             onPressed: _busy ? null : _guardar,

@@ -15,6 +15,7 @@ enum ValidacionEstado {
 
 /// Sincronización con backend y estados locales de cola.
 /// `syncing` y `syncError` son solo cliente; en API se envían como `pending_sync`.
+/// Tras un fallo de POST, la app vuelve a `pendingSync` (reintento); `syncError` puede venir de datos antiguos.
 enum SyncStatus { synced, pendingSync, syncing, syncError }
 
 /// Tipos de incidencia reportables.

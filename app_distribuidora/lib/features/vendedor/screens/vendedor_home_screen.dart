@@ -384,10 +384,14 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
           '${r.omittedCount} omitido(s).',
           '${r.errorCount} con error.',
         ];
+        if (r.errorDetails.isNotEmpty) {
+          lineas.add('');
+          lineas.addAll(r.errorDetails.map((e) => e.userMessage));
+        }
         if (r.pendingAfterCount > 0 || r.syncErrorAfterCount > 0) {
           lineas.add(
-            'En cola: ${r.pendingAfterCount} pendiente(s), '
-            '${r.syncErrorAfterCount} con error de sincronización.',
+            'En cola: ${r.pendingAfterCount} pendiente(s) de envío'
+            '${r.syncErrorAfterCount > 0 ? ', ${r.syncErrorAfterCount} con estado error antiguo' : ''}.',
           );
         }
         if (r.blockedMessage != null) {
@@ -400,7 +404,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Sincronización completada'),
-          content: Text(mensaje),
+          content: SingleChildScrollView(
+            child: Text(mensaje),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),

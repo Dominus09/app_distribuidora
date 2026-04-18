@@ -249,27 +249,18 @@ class _RutaScreenState extends State<RutaScreen> {
     }
 
     final base = List<Visita>.from(_visitas);
-    final siguiente = await widget.syncService.trySyncVisitaAfterLocalSave(
+    final syncTry = await widget.syncService.trySyncVisitaAfterLocalSave(
       base,
       visitaId,
       widget.apiService,
     );
     if (!mounted) return;
-    _emit(siguiente);
+    _emit(syncTry.visitas);
 
-    Visita? post;
-    for (final v in siguiente) {
-      if (v.id == visitaId) {
-        post = v;
-        break;
-      }
-    }
-    if (post != null && post.syncStatus == SyncStatus.syncError && mounted) {
+    if (syncTry.error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No se pudo sincronizar el registro. Quedó en cola para reintentar.',
-          ),
+        SnackBar(
+          content: Text(syncTry.error!.userMessage),
           behavior: SnackBarBehavior.floating,
         ),
       );

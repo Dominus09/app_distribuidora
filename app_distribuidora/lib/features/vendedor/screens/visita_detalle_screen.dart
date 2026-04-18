@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../models/visita.dart';
 import '../utils/incidencia_photo.dart';
 import '../utils/maps_navigation.dart';
@@ -234,44 +235,98 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
               ),
             ],
             const SizedBox(height: 28),
-            OutlinedButton.icon(
-              onPressed: _ir,
-              icon: const Icon(Icons.directions_outlined, size: 24),
-              label: const Text('Ir'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 56),
-                textStyle: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FilledButton.icon(
+                  onPressed: _ir,
+                  icon: const Icon(Icons.directions_outlined, size: 20),
+                  label: const Text('Ir'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.secondaryBlue,
+                    foregroundColor: AppColors.onPrimaryWhite,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
+                    ),
+                    minimumSize: const Size(0, 44),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: puedeEditar ? _marcarVisita : null,
-              icon: const Icon(Icons.check_circle_outline, size: 24),
-              label: const Text('Marcar visita'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(double.infinity, 56),
-                textStyle: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 10),
+                FilledButton.icon(
+                  onPressed: puedeEditar ? _marcarVisita : null,
+                  icon: const Icon(Icons.check_circle_outline, size: 20),
+                  label: const Text('Marcar visita'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.primaryRed,
+                    foregroundColor: AppColors.onPrimaryWhite,
+                    disabledBackgroundColor: AppColors.primaryRed
+                        .withValues(alpha: 0.38),
+                    disabledForegroundColor: AppColors.onPrimaryWhite
+                        .withValues(alpha: 0.62),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 12,
+                    ),
+                    minimumSize: const Size(0, 44),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: puedeEditar ? _registrarIncidencia : null,
-              icon: const Icon(Icons.warning_amber_rounded, size: 24),
-              label: const Text('Registrar incidencia'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(double.infinity, 56),
-                foregroundColor: theme.colorScheme.error,
-                textStyle: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: puedeEditar ? _registrarIncidencia : null,
+                  icon: const Icon(Icons.warning_amber_rounded, size: 20),
+                  label: const Text('Registrar incidencia'),
+                  style: ButtonStyle(
+                    foregroundColor: WidgetStateProperty.resolveWith((s) {
+                      if (s.contains(WidgetState.disabled)) {
+                        return AppColors.primaryRed.withValues(alpha: 0.38);
+                      }
+                      return AppColors.primaryRed;
+                    }),
+                    backgroundColor: const WidgetStatePropertyAll(
+                      AppColors.surface,
+                    ),
+                    side: WidgetStateProperty.resolveWith((s) {
+                      final a = s.contains(WidgetState.disabled) ? 0.38 : 1.0;
+                      return BorderSide(
+                        color: AppColors.primaryRed.withValues(alpha: a),
+                        width: 1.5,
+                      );
+                    }),
+                    padding: const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                    ),
+                    minimumSize: const WidgetStatePropertyAll(Size(0, 44)),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: const WidgetStatePropertyAll(
+                      RoundedRectangleBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(12)),
+                      ),
+                    ),
+                    textStyle: const WidgetStatePropertyAll(
+                      TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
             const SizedBox(height: 28),
             Theme(
