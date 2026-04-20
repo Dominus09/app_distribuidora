@@ -18,7 +18,7 @@ Widget homeWidgetForRol({
         vendedorNombre: displayName,
       ),
     DistribuidoraRol.chofer => const ChoferHomeScreen(),
-    DistribuidoraRol.bodega => const BodegaHomeScreen(),
+    DistribuidoraRol.bodega => BodegaHomeScreen(operadorNombre: displayName),
   };
 }
 
