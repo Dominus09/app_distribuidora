@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../auth_navigation.dart';
+import '../models/tipo_usuario.dart';
 import '../services/auth_service.dart';
 
 /// Login vendedor contra API (`codigo` + `password`).
@@ -58,10 +59,12 @@ class _DistribuidoraLoginScreenState extends State<DistribuidoraLoginScreen> {
         return;
       }
 
-      replaceWithVendedorHome(
+      final rol = rolDesdeTipoUsuario(r.tipoUsuario);
+      replaceWithHomeForRol(
         context,
-        vendedorCodigo: r.vendedor!,
-        vendedorNombre: r.nombre ?? r.vendedor!,
+        rol: rol,
+        usuarioCodigo: r.vendedor!,
+        displayName: r.nombre ?? r.vendedor!,
       );
     } on TimeoutException catch (_) {
       if (!mounted) return;
@@ -137,7 +140,7 @@ class _DistribuidoraLoginScreenState extends State<DistribuidoraLoginScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Inicia sesión con tu código de vendedor',
+                      'Inicia sesión con tu usuario de App Distribuidora',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,

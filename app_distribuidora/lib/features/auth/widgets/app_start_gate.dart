@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../auth_navigation.dart';
+import '../models/tipo_usuario.dart';
 import '../services/auth_service.dart';
 
-/// Arranque: sesión guardada → [VendedorHomeScreen]; si no → [DistribuidoraLoginScreen].
+/// Arranque: sesión guardada → home según `tipo_usuario`; si no → [DistribuidoraLoginScreen].
 class AppStartGate extends StatefulWidget {
   const AppStartGate({super.key});
 
@@ -31,6 +32,7 @@ class _AppStartGateState extends State<AppStartGate> {
 
     final codigo = await auth.readVendedorCodigo();
     final nombre = await auth.readVendedorNombre();
+    final tipoRaw = await auth.readTipoUsuario();
     if (!mounted) return;
 
     if (codigo == null || codigo.isEmpty) {
@@ -41,10 +43,12 @@ class _AppStartGateState extends State<AppStartGate> {
     }
 
     if (!mounted) return;
-    replaceWithVendedorHome(
+    final rol = rolDesdeTipoUsuario(tipoRaw);
+    replaceWithHomeForRol(
       context,
-      vendedorCodigo: codigo,
-      vendedorNombre: nombre ?? codigo,
+      rol: rol,
+      usuarioCodigo: codigo,
+      displayName: nombre ?? codigo,
     );
   }
 

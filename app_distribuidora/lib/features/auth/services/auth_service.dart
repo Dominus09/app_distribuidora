@@ -12,6 +12,7 @@ abstract final class AuthSessionKeys {
   static const loggedIn = 'distribuidora_auth_logged_in';
   static const vendedorCodigo = 'distribuidora_auth_vendedor_codigo';
   static const vendedorNombre = 'distribuidora_auth_vendedor_nombre';
+  static const tipoUsuario = 'distribuidora_auth_tipo_usuario';
 }
 
 /// Login real contra `POST .../login` y persistencia con [SharedPreferences].
@@ -81,11 +82,17 @@ class DistribuidoraAuthService {
 
       final vendedor = parsed.vendedor ?? trimmedCodigo;
       final nombre = parsed.nombre ?? vendedor;
-      await _persistSession(vendedor, nombre);
+      final tipo = (parsed.tipoUsuario ?? 'vendedor').trim().toLowerCase();
+      await _persistSession(
+        vendedor,
+        nombre,
+        tipoUsuario: tipo,
+      );
       return LoginResponse(
         success: true,
         vendedor: vendedor,
         nombre: nombre,
+        tipoUsuario: tipo,
       );
     } on SocketException {
       rethrow;
@@ -96,11 +103,16 @@ class DistribuidoraAuthService {
     }
   }
 
-  Future<void> _persistSession(String codigo, String nombre) async {
+  Future<void> _persistSession(
+    String codigo,
+    String nombre, {
+    required String tipoUsuario,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AuthSessionKeys.loggedIn, true);
     await prefs.setString(AuthSessionKeys.vendedorCodigo, codigo);
     await prefs.setString(AuthSessionKeys.vendedorNombre, nombre);
+    await prefs.setString(AuthSessionKeys.tipoUsuario, tipoUsuario);
   }
 
   Future<bool> isLoggedIn() async {
@@ -118,10 +130,17 @@ class DistribuidoraAuthService {
     return prefs.getString(AuthSessionKeys.vendedorNombre);
   }
 
+  /// Valor persistido del login (ej. `vendedor`, `chofer`, `bodega`). Sesiones antiguas pueden devolver `null`.
+  Future<String?> readTipoUsuario() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(AuthSessionKeys.tipoUsuario);
+  }
+
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AuthSessionKeys.loggedIn, false);
     await prefs.remove(AuthSessionKeys.vendedorCodigo);
     await prefs.remove(AuthSessionKeys.vendedorNombre);
+    await prefs.remove(AuthSessionKeys.tipoUsuario);
   }
 }

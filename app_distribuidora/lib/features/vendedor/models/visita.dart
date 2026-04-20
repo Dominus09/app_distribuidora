@@ -170,7 +170,8 @@ class Visita {
   /// RUT sin formato (`rut_clean` en API).
   final String? rutClean;
 
-  /// Día operativo de la parada (ej. `Sábado`). Si es null, la visita cuenta para cualquier día (datos viejos sin campo).
+  /// Día operativo de la parada (API suele enviar sin tilde, ej. `Sabado`; la app acepta cualquier variante).
+  /// Si es null o vacío, la visita cuenta en cualquier día (compatibilidad con datos sin campo).
   final String? diaOperativo;
 
   /// Título en mapa: prioriza `nombre_fantasia`, si no `clienteNombre`.
@@ -239,7 +240,9 @@ class Visita {
     return nombres[fecha.weekday - 1];
   }
 
-  static String _normDiaOperativo(String s) {
+  /// Clave estable para comparar con el backend: [String.trim], minúsculas y sin tildes
+  /// (`Sábado`, `Sabado`, ` SABADO ` → `sabado`, alineado con `LOWER(TRIM(dia_extra))` en servidor).
+  static String normalizarDiaOperativo(String s) {
     var t = s.trim().toLowerCase();
     const from = 'áéíóúüñ';
     const to = 'aeiouun';
@@ -249,12 +252,16 @@ class Visita {
     return t;
   }
 
-  /// Compara [diaOperativo] del backend con el día calendario (tolerante a tildes / mayúsculas).
-  bool coincideDiaOperativoConCalendario(DateTime fechaCalendario) {
+  /// Útil si el usuario elige un día en UI (ej. `"Sábado"`) y hay que comparar con [diaOperativo] del JSON.
+  bool coincideDiaOperativoConEtiqueta(String etiquetaDia) {
     final raw = diaOperativo;
     if (raw == null || raw.trim().isEmpty) return true;
-    return _normDiaOperativo(raw) ==
-        _normDiaOperativo(nombreDiaCalendario(fechaCalendario));
+    return normalizarDiaOperativo(raw) == normalizarDiaOperativo(etiquetaDia);
+  }
+
+  /// Compara [diaOperativo] con el día calendario del dispositivo (tildes, mayúsculas y espacios laterales no importan).
+  bool coincideDiaOperativoConCalendario(DateTime fechaCalendario) {
+    return coincideDiaOperativoConEtiqueta(nombreDiaCalendario(fechaCalendario));
   }
 
   factory Visita.fromJson(Map<String, dynamic> json) {
