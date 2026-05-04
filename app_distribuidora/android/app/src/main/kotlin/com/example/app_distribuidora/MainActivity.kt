@@ -1,4 +1,4 @@
-package com.example.app_distribuidora
+package cl.quillotana.ops
 
 import io.flutter.embedding.android.FlutterActivity
 
