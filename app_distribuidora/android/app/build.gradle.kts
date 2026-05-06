@@ -40,18 +40,7 @@ android {
 
     buildTypes {
         release {
-            // Firma temporal (puedes cambiar después)
             signingConfig = signingConfigs.getByName("debug")
-            ndk {
-                debugSymbolLevel = "NONE"
-            }
-        }
-    }
-
-    // 🔥 FIX DEFINITIVO ERROR STRIP DEBUG SYMBOLS
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
         }
     }
 }
