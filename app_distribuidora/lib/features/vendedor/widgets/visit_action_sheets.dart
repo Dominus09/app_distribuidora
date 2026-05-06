@@ -307,7 +307,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           const SizedBox(height: 8),
           Text(
             offline
-                ? 'Sin conexión: se guardará localmente y se sincronizará después.'
+                ? 'Envío en línea no activo: la visita se guarda en el dispositivo y se enviará cuando el servidor esté disponible.'
                 : 'En línea con GPS: se valida distancia máxima 500 m. Sin GPS: la validación queda pendiente hasta sincronizar.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
@@ -686,7 +686,7 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
           Text(
             widget.attemptRemoteSave
                 ? 'En línea: se enviará al servidor al guardar.'
-                : 'Sin conexión: quedará pendiente de envío hasta la sincronización forzada.',
+                : 'Envío en línea no activo: la incidencia queda en cola en el dispositivo hasta poder sincronizar.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

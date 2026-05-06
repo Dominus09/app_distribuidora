@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException;
+
+import 'package:http/http.dart' as http;
 
 import '../models/visita.dart';
 import 'api_service.dart';
@@ -81,9 +84,30 @@ String _humanizeHttpBody(ApiHttpException e) {
   return 'HTTP ${e.statusCode}';
 }
 
+String _kindForSyncException(Object e) {
+  if (e is TimeoutException) return 'timeout_servidor';
+  if (e is SocketException) return 'sin_red_socket';
+  if (e is http.ClientException) return 'error_transporte_http';
+  if (e is ApiHttpException) return 'error_http_${e.statusCode}';
+  if (e is FormatException) return 'error_parse_json';
+  return 'error_desconocido';
+}
+
 String _reasonForException(Object e) {
   if (e is ApiHttpException) return _humanizeHttpBody(e);
-  if (e is TimeoutException) return 'Tiempo de espera agotado';
+  if (e is TimeoutException) {
+    return 'Tiempo de espera agotado al contactar el servidor';
+  }
+  if (e is SocketException) {
+    final m = e.message.trim();
+    if (m.isNotEmpty) return 'Sin red hacia el servidor: $m';
+    return 'No hay conexión de red con el servidor';
+  }
+  if (e is http.ClientException) {
+    final m = e.message.trim();
+    if (m.isNotEmpty) return 'Error de red cliente: $m';
+    return 'Error de red cliente al contactar el servidor';
+  }
   if (e is FormatException) {
     final m = e.message.trim();
     if (m.isNotEmpty) return m;
@@ -103,12 +127,14 @@ String _clientLabelForSync(Visita v) {
 }
 
 SyncVisitaErrorDetail _syncFailureDetail(Visita v, Object e) {
+  final kind = _kindForSyncException(e);
+  final reason = _reasonForException(e);
   // ignore: avoid_print — trazas solicitadas para depuración en terreno.
-  print('Error sync visita ID: ${v.id}');
+  print('[Sync][POST visitas][${v.id}] kind=$kind reason=$reason');
   return SyncVisitaErrorDetail(
     visitaId: v.id,
     clientLabel: _clientLabelForSync(v),
-    reason: _reasonForException(e),
+    reason: reason,
   );
 }
 

@@ -57,8 +57,15 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   bool _forceOffline = false;
   bool _connectivityOk = true;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  Timer? _apiReachProbeTimer;
+  DateTime? _apiOkBypassUntil;
 
-  bool get _attemptRemoteSave => _connectivityOk && !_forceOffline;
+  /// Incluye bypass si el servidor responde aunque `connectivity_plus` falle (PDA / ethernet).
+  bool get _attemptRemoteSave =>
+      !_forceOffline &&
+      (_connectivityOk ||
+          (_apiOkBypassUntil != null &&
+              DateTime.now().isBefore(_apiOkBypassUntil!)));
 
   /// Wi‑Fi, datos móviles, ethernet, VPN o satélite (no solo `none` / bluetooth).
   static bool _hayRedDatos(List<ConnectivityResult> results) {
@@ -72,6 +79,40 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
       ConnectivityResult.satellite,
     };
     return results.any(conDatos.contains);
+  }
+
+  void _kickApiReachProbes() {
+    if (!mounted || _forceOffline || _connectivityOk) {
+      _apiReachProbeTimer?.cancel();
+      _apiReachProbeTimer = null;
+      return;
+    }
+    _apiReachProbeTimer?.cancel();
+    _apiReachProbeTimer =
+        Timer.periodic(const Duration(seconds: 14), (_) {
+      unawaited(_runApiReachProbe());
+    });
+    unawaited(_runApiReachProbe());
+  }
+
+  Future<void> _runApiReachProbe() async {
+    if (!mounted || _forceOffline || _connectivityOk) {
+      _apiReachProbeTimer?.cancel();
+      _apiReachProbeTimer = null;
+      return;
+    }
+    final o = await _apiService.checkReachability();
+    // ignore: avoid_print
+    print('[Reachability probe] ${o.logLine}');
+    if (!mounted) return;
+    if (o.ok) {
+      setState(() {
+        _apiOkBypassUntil =
+            DateTime.now().add(const Duration(minutes: 6));
+      });
+      _apiReachProbeTimer?.cancel();
+      _apiReachProbeTimer = null;
+    }
   }
 
   bool _syncBusy = false;
@@ -98,7 +139,17 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
       final previousOk = _connectivityOk;
       final ok = _hayRedDatos(results);
       if (!mounted) return;
-      setState(() => _connectivityOk = ok);
+      setState(() {
+        _connectivityOk = ok;
+        if (ok) {
+          _apiOkBypassUntil = null;
+          _apiReachProbeTimer?.cancel();
+          _apiReachProbeTimer = null;
+        }
+      });
+      if (!ok) {
+        _kickApiReachProbes();
+      }
       if (!context.mounted) return;
       if (ok && !previousOk && !_forceOffline) {
         final hay = _visitas.any(
@@ -118,12 +169,17 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     });
     Connectivity().checkConnectivity().then((results) {
       final ok = _hayRedDatos(results);
-      if (mounted) setState(() => _connectivityOk = ok);
+      if (!mounted) return;
+      setState(() => _connectivityOk = ok);
+      if (!ok) {
+        _kickApiReachProbes();
+      }
     });
   }
 
   @override
   void dispose() {
+    _apiReachProbeTimer?.cancel();
     _connectivitySub?.cancel();
     super.dispose();
   }
@@ -302,12 +358,27 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     );
   }
 
-  void _abrirRuta() {
+  Future<void> _abrirRuta() async {
+    // Al abrir terreno: intento único de API si connectivity_plus falla (PDA / ethernet).
+    if (!_attemptRemoteSave && !_forceOffline) {
+      final o = await _apiService.checkReachability();
+      // ignore: avoid_print
+      print('[Abrir ruta] ${o.logLine}');
+      if (!mounted) return;
+      if (o.ok) {
+        setState(() {
+          _apiOkBypassUntil =
+              DateTime.now().add(const Duration(minutes: 6));
+        });
+      }
+    }
+    if (!mounted) return;
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => RutaScreen(
           visitas: List<Visita>.from(_visitasVistaOperativa),
           attemptRemoteSave: _attemptRemoteSave,
+          interfaceConnectivityDetected: _connectivityOk,
           locationService: _locationService,
           vendedorService: _vendedorService,
           syncService: _syncService,
@@ -357,11 +428,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
 
   Future<void> _sincronizacionForzada() async {
     if (_syncBusy) return;
-    if (!_connectivityOk || _forceOffline) {
+    if (_forceOffline) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No hay conexión disponible'),
+          content: Text(
+            'Envío en línea desactivado en esta sesión.',
+          ),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -369,17 +442,23 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     }
     setState(() => _syncBusy = true);
     try {
-      final alcanzable = await _apiService.pingReachable();
+      final reach = await _apiService.checkReachability();
+      // ignore: avoid_print
+      print('[Sync forzado preflight] ${reach.logLine}');
       if (!mounted) return;
-      if (!alcanzable) {
+      if (!reach.ok) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No hay conexión disponible'),
+          SnackBar(
+            content: Text(reach.userMessage),
             behavior: SnackBarBehavior.floating,
           ),
         );
         return;
       }
+      setState(() {
+        _apiOkBypassUntil =
+            DateTime.now().add(const Duration(minutes: 6));
+      });
       final r = await _syncService.forceSyncPending(_visitas, _apiService);
       if (!mounted) return;
       setState(() {
@@ -831,7 +910,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TerrenoSyncBanner(
-                interfaceConnected: _attemptRemoteSave,
+                canSyncWithServer: _attemptRemoteSave,
+                interfaceConnectivityDetected: _connectivityOk,
                 anyItemSyncing: _visitas.any(
                   (v) => v.syncStatus == SyncStatus.syncing,
                 ),

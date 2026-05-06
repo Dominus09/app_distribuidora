@@ -58,7 +58,7 @@ extension ValidacionEstadoUi on ValidacionEstado {
     ValidacionEstado.fueraRango => 'Fuera de rango (> 500 m)',
     ValidacionEstado.sinGps => 'Sin GPS',
     ValidacionEstado.pendienteValidacion => 'Pendiente de validación',
-    ValidacionEstado.offline => 'Sin conexión',
+    ValidacionEstado.offline => 'Registro local (sin envío en vivo)',
   };
 
   String get apiValue => switch (this) {

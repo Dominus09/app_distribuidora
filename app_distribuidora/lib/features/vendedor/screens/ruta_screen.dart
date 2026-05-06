@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 
 import '../models/visita.dart';
@@ -25,6 +24,7 @@ class RutaScreen extends StatefulWidget {
     required this.visitas,
     required this.onVisitasChanged,
     required this.attemptRemoteSave,
+    required this.interfaceConnectivityDetected,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
@@ -35,6 +35,8 @@ class RutaScreen extends StatefulWidget {
   final List<Visita> visitas;
   final ValueChanged<List<Visita>> onVisitasChanged;
   final bool attemptRemoteSave;
+  /// `connectivity_plus` (wifi/móvil/ethernet…) — puede estar en fallo en PDA/industrial.
+  final bool interfaceConnectivityDetected;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
@@ -53,45 +55,14 @@ class _RutaScreenState extends State<RutaScreen> {
   double? _userLon;
   _ModoOrdenLista _modoOrden = _ModoOrdenLista.ordenRuta;
 
-  /// Interfaz con datos (Wi‑Fi / datos); la pantalla de ruta escucha aparte del Home.
-  bool _interfaceOk = true;
-  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
-
-  static bool _hayRedDatos(List<ConnectivityResult> results) {
-    if (results.isEmpty) return false;
-    const conDatos = <ConnectivityResult>{
-      ConnectivityResult.wifi,
-      ConnectivityResult.mobile,
-      ConnectivityResult.ethernet,
-      ConnectivityResult.vpn,
-      ConnectivityResult.other,
-      ConnectivityResult.satellite,
-    };
-    return results.any(conDatos.contains);
-  }
-
-  /// API solo si el padre lo permite y hay interfaz de red activa.
-  bool get _puedeIntentarApi => widget.attemptRemoteSave && _interfaceOk;
+  /// API si el Home/diagnóstico lo permiten (incluye bypass si el servidor responde).
+  bool get _puedeIntentarApi => widget.attemptRemoteSave;
 
   @override
   void initState() {
     super.initState();
     _visitas = List<Visita>.from(widget.visitas);
     unawaited(_actualizarUbicacionUsuario());
-    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
-      final ok = _hayRedDatos(results);
-      if (mounted) setState(() => _interfaceOk = ok);
-    });
-    Connectivity().checkConnectivity().then((results) {
-      if (!mounted) return;
-      setState(() => _interfaceOk = _hayRedDatos(results));
-    });
-  }
-
-  @override
-  void dispose() {
-    _connectivitySub?.cancel();
-    super.dispose();
   }
 
   @override
@@ -219,28 +190,33 @@ class _RutaScreenState extends State<RutaScreen> {
 
   Future<void> _intentarSincronizarTrasGuardado(String visitaId) async {
     if (!widget.attemptRemoteSave) {
-      return;
-    }
-    if (!_interfaceOk) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Sin conexión. El registro quedó guardado; se sincronizará cuando haya red.',
+            'Sin acceso configurado para envío en línea. El registro quedó '
+            'guardado en el dispositivo.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
       );
       return;
     }
-    final ping = await widget.apiService.pingReachable();
+
+    final antesIdx = _visitas.indexWhere((v) => v.id == visitaId);
+    final SyncStatus estadoAntesSync =
+        antesIdx >= 0 ? _visitas[antesIdx].syncStatus : SyncStatus.pendingSync;
+
+    final reach = await widget.apiService.checkReachability();
+    // ignore: avoid_print
+    print('[Ruta sync preflight] ${reach.logLine}');
     if (!mounted) return;
-    if (!ping) {
+    if (!reach.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'No hay conexión con el servidor. El registro quedó guardado; '
-            'usa sincronización forzada más tarde.',
+            '${reach.userMessage} El registro quedó guardado; puedes usar '
+            '“Sincronizar” en inicio después.',
           ),
           behavior: SnackBarBehavior.floating,
         ),
@@ -256,6 +232,25 @@ class _RutaScreenState extends State<RutaScreen> {
     );
     if (!mounted) return;
     _emit(syncTry.visitas);
+
+    final despuesIdx =
+        syncTry.visitas.indexWhere((v) => v.id == visitaId);
+    final estadoDespues = despuesIdx >= 0
+        ? syncTry.visitas[despuesIdx].syncStatus
+        : estadoAntesSync;
+    final pasoASincronizado = estadoAntesSync != SyncStatus.synced &&
+        estadoDespues == SyncStatus.synced;
+
+    if (pasoASincronizado && mounted && syncTry.error == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Registro enviado y sincronizado con el servidor.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
 
     if (syncTry.error != null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -438,8 +433,6 @@ class _RutaScreenState extends State<RutaScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bannerConnected = widget.attemptRemoteSave && _interfaceOk;
-
     return Scaffold(
       appBar: AppBar(
         centerTitle: false,
@@ -470,7 +463,9 @@ class _RutaScreenState extends State<RutaScreen> {
       body: Column(
         children: [
           TerrenoSyncBanner(
-            interfaceConnected: bannerConnected,
+            canSyncWithServer: widget.attemptRemoteSave,
+            interfaceConnectivityDetected:
+                widget.interfaceConnectivityDetected,
             anyItemSyncing:
                 _visitas.any((v) => v.syncStatus == SyncStatus.syncing),
             batchSyncing: false,

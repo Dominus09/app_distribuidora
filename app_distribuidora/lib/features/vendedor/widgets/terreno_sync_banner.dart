@@ -6,13 +6,17 @@ import '../../../core/theme/app_colors.dart';
 class TerrenoSyncBanner extends StatelessWidget {
   const TerrenoSyncBanner({
     super.key,
-    required this.interfaceConnected,
+    required this.canSyncWithServer,
+    required this.interfaceConnectivityDetected,
     required this.anyItemSyncing,
     required this.batchSyncing,
   });
 
-  /// Wi‑Fi / datos / ethernet según `connectivity_plus` (sin validar API).
-  final bool interfaceConnected;
+  /// Hay permiso/intento de usar API (`connectivity_plus` y/o servidor alcanzable).
+  final bool canSyncWithServer;
+
+  /// `connectivity_plus` informa interfaz con datos útil (wifi/móvil/ethernet…).
+  final bool interfaceConnectivityDetected;
 
   /// Alguna visita en estado `syncing`.
   final bool anyItemSyncing;
@@ -29,12 +33,18 @@ class TerrenoSyncBanner extends StatelessWidget {
     late final Color fg;
     late final IconData icon;
 
-    if (!interfaceConnected) {
+    if (!canSyncWithServer) {
       text =
-          'Sin conexión. Los registros se guardarán y se sincronizarán después.';
+          'Sin acceso al servidor ahora. Los registros se guardan en el dispositivo y se envían cuando sea posible.';
       bg = AppColors.primaryRed.withValues(alpha: 0.08);
       fg = AppColors.primaryRed;
       icon = Icons.wifi_off_rounded;
+    } else if (!interfaceConnectivityDetected) {
+      text =
+          'Servidor accesible; la interfaz no reportó tipo de red. Los envíos se intentan igualmente.';
+      bg = AppColors.secondaryBlue.withValues(alpha: 0.1);
+      fg = AppColors.secondaryBlue;
+      icon = Icons.cloud_queue_outlined;
     } else if (batchSyncing || anyItemSyncing) {
       text = 'Sincronizando registros pendientes…';
       bg = AppColors.secondaryBlue.withValues(alpha: 0.1);

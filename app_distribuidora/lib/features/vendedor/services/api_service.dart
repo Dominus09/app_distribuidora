@@ -1,11 +1,110 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
 import '../../../core/config/api_config.dart';
 import '../models/visita.dart';
 import 'visitas_api_payload.dart';
+
+const Duration _kGetRutaTimeout = Duration(seconds: 45);
+const Duration _kPostVisitaTimeout = Duration(seconds: 25);
+const Duration _kPostSyncTimeout = Duration(seconds: 45);
+
+/// Resultado de [ApiService.checkReachability] (OpenAPI `GET …/openapi.json`).
+enum ApiReachabilityKind {
+  ok,
+  timeout,
+  networkUnreachable,
+  clientTransportError,
+  serverError,
+  responseShapeError,
+  unknown,
+}
+
+/// Detalle de llegada al API (logs + mensaje de usuario).
+class ApiReachabilityOutcome {
+  const ApiReachabilityOutcome._({
+    required this.kind,
+    required this.detail,
+    required this.userMessage,
+  });
+
+  final ApiReachabilityKind kind;
+  final String detail;
+  final String userMessage;
+
+  bool get ok => kind == ApiReachabilityKind.ok;
+
+  String get logLine => 'reachability kind=$kind detail=$detail';
+
+  static const ApiReachabilityOutcome success = ApiReachabilityOutcome._(
+    kind: ApiReachabilityKind.ok,
+    detail: 'openapi.json respondió',
+    userMessage: '',
+  );
+
+  factory ApiReachabilityOutcome.timeoutWait(Duration waited) {
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.timeout,
+      detail: '${waited.inMilliseconds}ms',
+      userMessage:
+          'Tiempo de espera al contactar el servidor. Revisa la red hacia el API o vuelve a intentar.',
+    );
+  }
+
+  factory ApiReachabilityOutcome.network(String message) {
+    final m = message.trim();
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.networkUnreachable,
+      detail: m,
+      userMessage: m.isEmpty
+          ? 'No se pudo establecer conexión de red con el servidor.'
+          : 'Sin ruta de red hacia el servidor: $m',
+    );
+  }
+
+  factory ApiReachabilityOutcome.clientHttp(String message) {
+    final m = message.trim();
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.clientTransportError,
+      detail: m,
+      userMessage: m.isEmpty
+          ? 'Fallo al conectar con el servidor (cliente HTTP).'
+          : 'Error de red/HTTP al contactar el servidor: $m',
+    );
+  }
+
+  factory ApiReachabilityOutcome.httpError(int status, String snippet) {
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.serverError,
+      detail: 'HTTP $status $snippet',
+      userMessage: 'El servidor respondió con error HTTP $status'
+          '${snippet.isEmpty ? '.' : ': $snippet'}',
+    );
+  }
+
+  factory ApiReachabilityOutcome.badOpenApiJson(String message) {
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.responseShapeError,
+      detail: message,
+      userMessage:
+          'El servidor respondió, pero la respuesta no es JSON válido (OpenAPI). $message',
+    );
+  }
+
+  factory ApiReachabilityOutcome.unknown(Object e) {
+    final s = e.toString().trim();
+    return ApiReachabilityOutcome._(
+      kind: ApiReachabilityKind.unknown,
+      detail: s,
+      userMessage: s.isEmpty
+          ? 'Error desconocido al comprobar el servidor.'
+          : 'Error al comprobar el servidor: $s',
+    );
+  }
+}
 
 /// Respuesta de POST `/app_distribuidora/visitas/sync` (`SyncResponse` en OpenAPI).
 class SyncApiResult {
@@ -26,9 +125,15 @@ class ApiService {
 
   final http.Client _client;
 
-  /// Comprueba que el servidor API responde (internet real, no solo interfaz activa).
-  /// Usa OpenAPI de FastAPI; tolera 3xx–4xx como “alcanzable” (red y DNS OK).
-  Future<bool> pingReachable({
+  static String _snippetBody(String body, {int max = 140}) {
+    final oneLine = body.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (oneLine.length <= max) return oneLine;
+    return '${oneLine.substring(0, max)}…';
+  }
+
+  /// Comprueba que el servidor API responde (red + DNS + handshake + HTTP).
+  /// Tolera 3xx–4xx como “alcanzable” para descartar sólo caídas/red/5xx obvias.
+  Future<ApiReachabilityOutcome> checkReachability({
     Duration timeout = const Duration(seconds: 8),
   }) async {
     final uri = _uri('openapi.json');
@@ -39,10 +144,61 @@ class ApiService {
             headers: {'Accept': 'application/json'},
           )
           .timeout(timeout);
-      return resp.statusCode < 500;
-    } on Object {
-      return false;
+      if (resp.statusCode >= 500) {
+        return ApiReachabilityOutcome.httpError(
+          resp.statusCode,
+          _snippetBody(resp.body),
+        );
+      }
+      if (resp.statusCode < 200) {
+        return ApiReachabilityOutcome.httpError(
+          resp.statusCode,
+          _snippetBody(resp.body),
+        );
+      }
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        final body = resp.body.trim();
+        if (body.isEmpty) {
+          return ApiReachabilityOutcome.badOpenApiJson('Cuerpo vacío.');
+        }
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is! Map && decoded is! List) {
+            return ApiReachabilityOutcome.badOpenApiJson(
+              'Se esperaba JSON objeto o lista.',
+            );
+          }
+        } on FormatException catch (e) {
+          return ApiReachabilityOutcome.badOpenApiJson(e.message);
+        }
+        return ApiReachabilityOutcome.success;
+      }
+
+      /// 3xx / 4xx: el equipo remoto contesta (similar a ping tolerante anterior).
+      return ApiReachabilityOutcome._(
+        kind: ApiReachabilityKind.ok,
+        detail:
+            'HTTP ${resp.statusCode} (${_snippetBody(resp.body)})',
+        userMessage: '',
+      );
+    } on TimeoutException {
+      return ApiReachabilityOutcome.timeoutWait(timeout);
+    } on SocketException catch (e) {
+      return ApiReachabilityOutcome.network(e.message);
+    } on http.ClientException catch (e) {
+      return ApiReachabilityOutcome.clientHttp(e.message);
+    } catch (e) {
+      return ApiReachabilityOutcome.unknown(e);
     }
+  }
+
+  /// Comprueba que el servidor API responde (internet real, no solo interfaz activa).
+  /// Usa OpenAPI de FastAPI; tolera 3xx–4xx como “alcanzable” (red y DNS OK).
+  Future<bool> pingReachable({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final o = await checkReachability(timeout: timeout);
+    return o.ok;
   }
 
   Uri _uri(String path, [Map<String, String>? query]) {
@@ -63,10 +219,12 @@ class ApiService {
       'vendedor/ruta',
       {'fecha': fecha, 'vendedor': vendedor},
     );
-    final resp = await _client.get(
-      uri,
-      headers: {'Accept': 'application/json'},
-    );
+    final resp = await _client
+        .get(
+          uri,
+          headers: {'Accept': 'application/json'},
+        )
+        .timeout(_kGetRutaTimeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw ApiHttpException(resp.statusCode, resp.body);
     }
@@ -114,21 +272,31 @@ class ApiService {
     final uri = _uri('visitas');
     final raw = visita.toJsonForApiCreate();
     final requestBody = await appendFotoBase64IfPlatformSupported(raw, visita);
-    final resp = await _client.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode(requestBody),
-    );
+    final resp = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode(requestBody),
+        )
+        .timeout(_kPostVisitaTimeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw ApiHttpException(resp.statusCode, resp.body);
     }
     if (resp.body.isEmpty) {
       return visita;
     }
-    final decoded = jsonDecode(resp.body);
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(resp.body);
+    } on FormatException catch (e) {
+      throw ApiHttpException(
+        resp.statusCode,
+        'JSON inválido en respuesta de visitas: ${e.message}',
+      );
+    }
     if (decoded is! Map) {
       return visita;
     }
@@ -152,14 +320,16 @@ class ApiService {
       list.add(await appendFotoBase64IfPlatformSupported(raw, v));
     }
     final payload = {'visitas': list};
-    final resp = await _client.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode(payload),
-    );
+    final resp = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(_kPostSyncTimeout);
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw ApiHttpException(resp.statusCode, resp.body);
     }
