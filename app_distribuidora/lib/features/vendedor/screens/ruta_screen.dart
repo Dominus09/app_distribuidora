@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -208,8 +209,7 @@ class _RutaScreenState extends State<RutaScreen> {
         antesIdx >= 0 ? _visitas[antesIdx].syncStatus : SyncStatus.pendingSync;
 
     final reach = await widget.apiService.checkReachability();
-    // ignore: avoid_print
-    print('[Ruta sync preflight] ${reach.logLine}');
+    fieldLog('Ruta sync preflight', reach.logLine);
     if (!mounted) return;
     if (!reach.ok) {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -4,6 +4,7 @@ import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
+import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import 'api_service.dart';
 
@@ -88,13 +89,24 @@ String _kindForSyncException(Object e) {
   if (e is TimeoutException) return 'timeout_servidor';
   if (e is SocketException) return 'sin_red_socket';
   if (e is http.ClientException) return 'error_transporte_http';
-  if (e is ApiHttpException) return 'error_http_${e.statusCode}';
+  if (e is ApiHttpException) {
+    if (e.statusCode == 401 || e.statusCode == 403) {
+      return 'error_autenticacion_http_${e.statusCode}';
+    }
+    return 'error_http_${e.statusCode}';
+  }
   if (e is FormatException) return 'error_parse_json';
   return 'error_desconocido';
 }
 
 String _reasonForException(Object e) {
-  if (e is ApiHttpException) return _humanizeHttpBody(e);
+  if (e is ApiHttpException) {
+    if (e.statusCode == 401 || e.statusCode == 403) {
+      return 'Sesión o permisos inválidos en el servidor (HTTP ${e.statusCode}). '
+          '${_humanizeHttpBody(e)}';
+    }
+    return _humanizeHttpBody(e);
+  }
   if (e is TimeoutException) {
     return 'Tiempo de espera agotado al contactar el servidor';
   }
@@ -129,8 +141,7 @@ String _clientLabelForSync(Visita v) {
 SyncVisitaErrorDetail _syncFailureDetail(Visita v, Object e) {
   final kind = _kindForSyncException(e);
   final reason = _reasonForException(e);
-  // ignore: avoid_print — trazas solicitadas para depuración en terreno.
-  print('[Sync][POST visitas][${v.id}] kind=$kind reason=$reason');
+  fieldLog('Sync', '[POST visitas][${v.id}] kind=$kind reason=$reason');
   return SyncVisitaErrorDetail(
     visitaId: v.id,
     clientLabel: _clientLabelForSync(v),

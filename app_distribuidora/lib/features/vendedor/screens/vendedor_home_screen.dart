@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../auth/auth_navigation.dart';
 import '../../auth/services/auth_service.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -42,7 +43,8 @@ class VendedorHomeScreen extends StatefulWidget {
   State<VendedorHomeScreen> createState() => _VendedorHomeScreenState();
 }
 
-class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
+class _VendedorHomeScreenState extends State<VendedorHomeScreen>
+    with WidgetsBindingObserver {
   late final VendedorService _vendedorService;
   late final SyncService _syncService;
   late final LocationService _locationService;
@@ -54,11 +56,12 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   bool _routeStarted = false;
   bool _routeFinished = false;
   /// Simula falta de red (pruebas); la API solo se intenta si también hay conectividad real.
-  bool _forceOffline = false;
+  final bool _forceOffline = false;
   bool _connectivityOk = true;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _apiReachProbeTimer;
   DateTime? _apiOkBypassUntil;
+  Timer? _resumeDebounce;
 
   /// Incluye bypass si el servidor responde aunque `connectivity_plus` falle (PDA / ethernet).
   bool get _attemptRemoteSave =>
@@ -102,8 +105,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
       return;
     }
     final o = await _apiService.checkReachability();
-    // ignore: avoid_print
-    print('[Reachability probe] ${o.logLine}');
+    fieldLog('Reachability', o.logLine);
     if (!mounted) return;
     if (o.ok) {
       setState(() {
@@ -126,11 +128,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _vendedorService = widget.vendedorService ?? VendedorService();
     _syncService = widget.syncService ?? SyncService();
     _locationService = widget.locationService ?? LocationService();
     _apiService = widget.apiService ?? ApiService();
     _authService = widget.authService ?? DistribuidoraAuthService();
+    unawaited(_prefetchVisitasDesdeDisco());
     _rutaFuture = _cargarRutaDesdeApi();
     _rutaFuture.then((list) {
       if (mounted) setState(() => _visitas = list);
@@ -179,24 +183,94 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _resumeDebounce?.cancel();
     _apiReachProbeTimer?.cancel();
     _connectivitySub?.cancel();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _resumeDebounce?.cancel();
+      _resumeDebounce = Timer(const Duration(milliseconds: 800), () {
+        if (mounted) unawaited(_onAppResumed());
+      });
+    }
+  }
+
+  Future<void> _prefetchVisitasDesdeDisco() async {
+    final cached = await _vendedorService.loadVisitasFromDisk();
+    if (!mounted || cached == null || cached.isEmpty) return;
+    setState(() => _visitas = List<Visita>.from(cached));
+  }
+
+  Future<void> _onAppResumed() async {
+    await _restaurarVisitasDesdeDisco();
+    if (!mounted || _syncBusy || _forceOffline) return;
+    final hayPendientes = _visitas.any(
+      (v) =>
+          v.syncStatus == SyncStatus.pendingSync ||
+          v.syncStatus == SyncStatus.syncError,
+    );
+    if (!hayPendientes || !_attemptRemoteSave) return;
+    final reach = await _apiService.checkReachability();
+    fieldLog('Resume', reach.logLine);
+    if (!mounted || !reach.ok) return;
+    setState(() => _syncBusy = true);
+    try {
+      final r = await _syncService.forceSyncPending(_visitas, _apiService);
+      if (!mounted) return;
+      setState(() {
+        _visitas = r.visitas;
+        _rutaFuture = Future<List<Visita>>.value(r.visitas);
+      });
+      unawaited(_vendedorService.persistVisitasToDisk(r.visitas));
+      if (r.syncedCount > 0 && mounted && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Sincronizados ${r.syncedCount} registro(s) al volver a la app.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _syncBusy = false);
+    }
+  }
+
+  Future<void> _restaurarVisitasDesdeDisco() async {
+    final disk = await _vendedorService.loadVisitasFromDisk() ?? <Visita>[];
+    if (!mounted || disk.isEmpty) return;
+    setState(() {
+      _visitas = VendedorService.fusionarDiscoYMemoria(
+        disco: disk,
+        memoria: _visitas,
+      );
+      _rutaFuture = Future<List<Visita>>.value(_visitas);
+    });
+    unawaited(_vendedorService.persistVisitasToDisk(_visitas));
+  }
+
   /// Carga remota con respaldo en disco si falla la API.
   Future<List<Visita>> _cargarRutaDesdeApi() async {
     final fecha = _fechaApi(DateTime.now());
+    final cached = await _vendedorService.loadVisitasFromDisk() ?? <Visita>[];
     try {
-      final list =
+      final serverList =
           await _apiService.getRutaDelDia(fecha, widget.vendedorCodigo);
-      await _vendedorService.persistVisitasToDisk(list);
-      return list;
-    } catch (_) {
-      final cached = await _vendedorService.loadVisitasFromDisk();
-      if (cached != null && cached.isNotEmpty) {
-        return cached;
-      }
+      final merged = VendedorService.mergeServidorConLocales(
+        servidor: serverList,
+        locales: cached,
+      );
+      await _vendedorService.persistVisitasToDisk(merged);
+      return merged;
+    } catch (e) {
+      fieldLog('Ruta', 'GET ruta falló: $e');
+      if (cached.isNotEmpty) return cached;
       rethrow;
     }
   }
@@ -363,7 +437,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     if (!_attemptRemoteSave && !_forceOffline) {
       final o = await _apiService.checkReachability();
       // ignore: avoid_print
-      print('[Abrir ruta] ${o.logLine}');
+      fieldLog('Abrir ruta', o.logLine);
       if (!mounted) return;
       if (o.ok) {
         setState(() {
@@ -444,7 +518,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen> {
     try {
       final reach = await _apiService.checkReachability();
       // ignore: avoid_print
-      print('[Sync forzado preflight] ${reach.logLine}');
+      fieldLog('Sync forzado', reach.logLine);
       if (!mounted) return;
       if (!reach.ok) {
         ScaffoldMessenger.of(context).showSnackBar(

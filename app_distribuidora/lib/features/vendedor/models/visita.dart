@@ -1,3 +1,5 @@
+import '../../../core/config/terreno_config.dart';
+
 // Modelo de dominio de una parada de ruta (API + almacenamiento local).
 // Contrato alineado con OpenAPI: VisitaCreate, VisitaResponse (Quillotana Analytics API).
 
@@ -54,8 +56,10 @@ extension VisitaEstadoUi on VisitaEstado {
 
 extension ValidacionEstadoUi on ValidacionEstado {
   String get label => switch (this) {
-    ValidacionEstado.validado => 'Validado (≤ 500 m)',
-    ValidacionEstado.fueraRango => 'Fuera de rango (> 500 m)',
+    ValidacionEstado.validado =>
+        'Validado (≤ ${TerrenoConfig.maxDistanceVisitadoMetros.round()} m)',
+    ValidacionEstado.fueraRango =>
+        'Fuera de rango (> ${TerrenoConfig.maxDistanceVisitadoMetros.round()} m)',
     ValidacionEstado.sinGps => 'Sin GPS',
     ValidacionEstado.pendienteValidacion => 'Pendiente de validación',
     ValidacionEstado.offline => 'Registro local (sin envío en vivo)',
@@ -74,7 +78,7 @@ extension SyncStatusUi on SyncStatus {
   String get label => switch (this) {
     SyncStatus.synced => 'Sincronizado',
     SyncStatus.pendingSync => 'Pendiente de envío',
-    SyncStatus.syncing => 'Sincronizando…',
+    SyncStatus.syncing => 'Sincronizando… (reenvío)',
     SyncStatus.syncError => 'Error de sincronización',
   };
 

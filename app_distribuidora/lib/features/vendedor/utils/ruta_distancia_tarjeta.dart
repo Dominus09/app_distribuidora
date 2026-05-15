@@ -2,17 +2,12 @@ import 'package:geolocator/geolocator.dart';
 
 import '../models/visita.dart';
 import '../services/location_service.dart';
-import '../services/ruta_map_geolocator.dart';
 import 'maps_navigation.dart';
 
-/// Posición del vendedor para calcular distancias en lista (Geolocator + respaldo [LocationService]).
+/// Posición del vendedor para calcular distancias en lista (mismo GPS que visitas).
 Future<({double lat, double lon})?> obtenerPosicionUsuarioParaDistancias(
   LocationService locationService,
 ) async {
-  final device = await RutaMapGeolocator.tryDeviceLatLng();
-  if (device != null) {
-    return (lat: device.latitude, lon: device.longitude);
-  }
   final gpsOk = await locationService.isGpsAvailable();
   if (!gpsOk) return null;
   try {

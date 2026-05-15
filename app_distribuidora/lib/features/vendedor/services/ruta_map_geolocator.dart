@@ -1,7 +1,9 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-/// Posición del dispositivo para el mapa de ruta (no sustituye el GPS mock de visitas).
+import '../../../core/config/terreno_config.dart';
+
+/// Posición del dispositivo para el mapa de ruta.
 class RutaMapGeolocator {
   /// Devuelve `null` si servicio apagado, sin permiso o error.
   static Future<LatLng?> tryDeviceLatLng() async {
@@ -17,8 +19,10 @@ class RutaMapGeolocator {
       if (permission == LocationPermission.deniedForever) return null;
 
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
+        locationSettings: LocationSettings(
+          accuracy: LocationAccuracy.best,
+          distanceFilter: 0,
+          timeLimit: TerrenoConfig.gpsFixTimeout,
         ),
       );
       return LatLng(pos.latitude, pos.longitude);

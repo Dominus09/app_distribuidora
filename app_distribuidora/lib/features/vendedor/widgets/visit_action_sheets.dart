@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/config/terreno_config.dart';
+import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -9,24 +12,22 @@ import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../utils/incidencia_photo.dart';
 
-/// Distancia máxima permitida para marcar visitado con GPS (metros).
-/// No aplica a incidencias ni a atención telefónica.
-const double kMaxDistanceVisitadoMetros = 500;
-
-/// Distancia usuario → cliente para validar “visitado” ([Geolocator.distanceBetween]).
-double _distanceMetrosVisitadoUsuarioACliente(
-  LocationSnapshot snap,
-  Visita visita,
-) {
-  return Geolocator.distanceBetween(
-    snap.latitude,
-    snap.longitude,
-    visita.latCliente,
-    visita.lonCliente,
-  );
+Future<LocationSnapshot?> captureGpsSnapshot(
+  LocationService locationService,
+  String logTag,
+) async {
+  try {
+    return await locationService.getCurrentPosition();
+  } on TimeoutException catch (e) {
+    fieldLog(logTag, 'Timeout GPS: $e');
+    return null;
+  } catch (e, st) {
+    fieldLog(logTag, 'Error leyendo GPS: $e\n$st');
+    return null;
+  }
 }
 
-/// Bottom sheet: flujo "visitado" con compra / sin compra y validación mock GPS.
+/// Bottom sheet: flujo "visitado" con compra / sin compra y validación GPS.
 Future<Visita?> showVisitadoFlowSheet({
   required BuildContext context,
   required Visita visita,
@@ -99,6 +100,9 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
     super.dispose();
   }
 
+  Future<LocationSnapshot?> _obtenerSnapGps() =>
+      captureGpsSnapshot(widget.locationService, 'Visitado');
+
   Future<void> _guardar() async {
     if (_conCompra == null) {
       _toast('Indica si la visita fue con compra o sin compra.');
@@ -114,7 +118,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
       final gpsOk = await widget.locationService.isGpsAvailable();
       LocationSnapshot? snap;
       if (gpsOk) {
-        snap = await widget.locationService.getCurrentPosition();
+        snap = await _obtenerSnapGps();
       }
 
       final obs =
@@ -123,7 +127,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
 
       // --- Sin intento remoto: siempre se permite guardar; queda pendiente de sync.
       if (!widget.attemptRemoteSave) {
-        if (!gpsOk) {
+        if (!gpsOk || snap == null) {
           _popResult(
             actionId,
             estado: VisitaEstado.visitado,
@@ -139,11 +143,11 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           return;
         }
 
-        final d = _distanceMetrosVisitadoUsuarioACliente(snap!, widget.visita);
-        // Sin red: la distancia queda referencial; >500 m se deja para validar al sincronizar.
-        final validacion = d > kMaxDistanceVisitadoMetros
-            ? ValidacionEstado.pendienteValidacion
-            : ValidacionEstado.offline;
+        final d = widget.locationService.distanceToCliente(snap, widget.visita);
+        final validacion =
+            d > TerrenoConfig.maxDistanceVisitadoMetros
+                ? ValidacionEstado.pendienteValidacion
+                : ValidacionEstado.offline;
 
         _popResult(
           actionId,
@@ -177,19 +181,62 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         return;
       }
 
-      final d = _distanceMetrosVisitadoUsuarioACliente(snap!, widget.visita);
-      if (d > kMaxDistanceVisitadoMetros) {
+      if (snap == null) {
         if (mounted) {
-          setState(() => _distanceError = 'No estás dentro del rango (500m)');
+          setState(
+            () => _distanceError =
+                'No se obtuvo posición GPS a tiempo. Comprueba señal o permisos e inténtalo de nuevo.',
+          );
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('No estás dentro del rango (500m)'),
+              content: Text(
+                'No se obtuvo GPS a tiempo. Sal a campo abierto o reintenta.',
+              ),
               behavior: SnackBarBehavior.floating,
             ),
           );
         }
         return;
       }
+
+      final d = widget.locationService.distanceToCliente(snap, widget.visita);
+      final accStr = snap.accuracyMeters != null
+          ? '${snap.accuracyMeters!.toStringAsFixed(0)} m'
+          : 'desconocida';
+      fieldLog(
+        'Visitado',
+        'user=(${snap.latitude.toStringAsFixed(6)},${snap.longitude.toStringAsFixed(6)}) '
+        'acc=$accStr '
+        'cliente=(${widget.visita.latCliente.toStringAsFixed(6)},${widget.visita.lonCliente.toStringAsFixed(6)}) '
+        'dist=${d.toStringAsFixed(1)}m max=${TerrenoConfig.maxDistanceVisitadoMetros}m',
+      );
+
+      if (d > TerrenoConfig.maxDistanceVisitadoMetros) {
+        if (mounted) {
+          setState(
+            () => _distanceError =
+                'Distancia al cliente: ${d.round()} m (máximo permitido '
+                '${TerrenoConfig.maxDistanceVisitadoMetros.round()} m). '
+                'Precisión GPS declarada: $accStr.',
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Fuera de rango: ${d.round()} m (máx. '
+                '${TerrenoConfig.maxDistanceVisitadoMetros.round()} m).',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+
+      final accOk =
+          widget.locationService.accuracyAcceptableForStrictValidation(snap);
+      final validacion = accOk
+          ? ValidacionEstado.validado
+          : ValidacionEstado.pendienteValidacion;
 
       final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.visitado,
@@ -199,12 +246,24 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
         lonVisita: snap.longitude,
         fechaHoraVisita: ahora,
         distanciaMetros: d,
-        validacionEstado: ValidacionEstado.validado,
+        validacionEstado: validacion,
         syncStatus: SyncStatus.pendingSync,
         tipoIncidencia: null,
         fotoPath: null,
         localActionId: actionId,
       );
+
+      if (!accOk && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'GPS con baja precisión ($accStr). La visita se guarda; quedará '
+              'pendiente de validación (${TerrenoConfig.maxAcceptableAccuracyMeters.round()} m).',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
 
       if (!mounted) return;
       Navigator.of(context).pop(paraEnviar);
@@ -308,7 +367,8 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
           Text(
             offline
                 ? 'Envío en línea no activo: la visita se guarda en el dispositivo y se enviará cuando el servidor esté disponible.'
-                : 'En línea con GPS: se valida distancia máxima 500 m. Sin GPS: la validación queda pendiente hasta sincronizar.',
+                : 'En línea con GPS: se valida distancia máxima '
+                    '${TerrenoConfig.maxDistanceVisitadoMetros.round()} m. Sin GPS: la validación queda pendiente hasta sincronizar.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -485,7 +545,7 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
       if (!telefonica) {
         gpsOk = await widget.locationService.isGpsAvailable();
         if (gpsOk) {
-          snap = await widget.locationService.getCurrentPosition();
+          snap = await captureGpsSnapshot(widget.locationService, 'Incidencia');
         }
       }
 
@@ -496,15 +556,21 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
               ? widget.locationService.distanceToCliente(snap, widget.visita)
               : null);
 
-      final ValidacionEstado validacion = telefonica
-          ? (!widget.attemptRemoteSave
-              ? ValidacionEstado.offline
-              : ValidacionEstado.sinGps)
-          : (!widget.attemptRemoteSave
-              ? ValidacionEstado.offline
-              : (gpsOk && snap != null
-                  ? ValidacionEstado.validado
-                  : ValidacionEstado.sinGps));
+      final ValidacionEstado validacion;
+      if (telefonica) {
+        validacion = !widget.attemptRemoteSave
+            ? ValidacionEstado.offline
+            : ValidacionEstado.sinGps;
+      } else if (!widget.attemptRemoteSave) {
+        validacion = ValidacionEstado.offline;
+      } else if (!gpsOk || snap == null) {
+        validacion = ValidacionEstado.sinGps;
+      } else if (!widget.locationService
+          .accuracyAcceptableForStrictValidation(snap)) {
+        validacion = ValidacionEstado.pendienteValidacion;
+      } else {
+        validacion = ValidacionEstado.validado;
+      }
 
       final paraEnviar = widget.visita.copyWith(
         estado: VisitaEstado.incidencia,
