@@ -302,7 +302,7 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
       localActionId: actionId,
     );
     if (sync == SyncStatus.synced) {
-      widget.syncService.acknowledgeActionProcessed(actionId);
+      unawaited(widget.syncService.acknowledgeActionProcessed(actionId));
     }
     if (mounted) Navigator.of(context).pop(actualizada);
   }

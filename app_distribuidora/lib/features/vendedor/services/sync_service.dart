@@ -4,6 +4,7 @@ import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
+import '../../../core/telemetry/outbox_database.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import 'api_service.dart';
@@ -153,9 +154,20 @@ SyncVisitaErrorDetail _syncFailureDetail(Visita v, Object e) {
 class SyncService {
   final Set<String> _processedActionIds = <String>{};
   bool _outboundBusy = false;
+  bool _idsHydrated = false;
+  final OutboxDatabase _outboxDb = OutboxDatabase.instance;
 
-  void acknowledgeActionProcessed(String actionId) {
+  Future<void> _ensureProcessedIdsLoaded() async {
+    if (_idsHydrated) return;
+    final stored = await _outboxDb.loadProcessedActionIds();
+    _processedActionIds.addAll(stored);
+    _idsHydrated = true;
+    fieldLog('Sync', 'IDs confirmados cargados: ${stored.length}');
+  }
+
+  Future<void> acknowledgeActionProcessed(String actionId) async {
     _processedActionIds.add(actionId);
+    await _outboxDb.rememberProcessedAction(actionId);
   }
 
   List<Visita> normalizeStuckSyncing(List<Visita> source) {
@@ -173,10 +185,12 @@ class SyncService {
 
   Visita _mergeServerResponse(Visita local, Visita fromServer) {
     final sid = fromServer.id.trim();
+    final confirmedAt = DateTime.now().toUtc();
     return fromServer.copyWith(
       syncStatus: SyncStatus.synced,
       localActionId: local.localActionId,
       id: sid.isNotEmpty ? fromServer.id : local.id,
+      syncConfirmedAt: confirmedAt,
     );
   }
 
@@ -196,6 +210,7 @@ class SyncService {
     String visitaId,
     ApiService api,
   ) async {
+    await _ensureProcessedIdsLoaded();
     if (_outboundBusy) {
       return TrySyncVisitaResult(visitas: List<Visita>.from(source));
     }
@@ -218,7 +233,10 @@ class SyncService {
       return TrySyncVisitaResult(visitas: list);
     }
     if (_processedActionIds.contains(lid)) {
-      list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+      list[idx] = v.copyWith(
+        syncStatus: SyncStatus.synced,
+        syncConfirmedAt: v.syncConfirmedAt ?? DateTime.now().toUtc(),
+      );
       return TrySyncVisitaResult(visitas: list);
     }
 
@@ -232,12 +250,16 @@ class SyncService {
         final saved = await api
             .registrarVisita(v)
             .timeout(_kRegistrarTimeout);
-        _processedActionIds.add(lid);
+        await acknowledgeActionProcessed(lid);
         list[idx] = _mergeServerResponse(v, saved);
+        fieldLog('Sync', '[POST visitas][${v.id}] ACK confirmado');
       } on ApiHttpException catch (e) {
         if (_isDuplicateHttp(e)) {
-          _processedActionIds.add(lid);
-          list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+          await acknowledgeActionProcessed(lid);
+          list[idx] = v.copyWith(
+            syncStatus: SyncStatus.synced,
+            syncConfirmedAt: DateTime.now().toUtc(),
+          );
         } else {
           errorOut = _syncFailureDetail(list[idx], e);
           list[idx] = list[idx].copyWith(syncStatus: SyncStatus.pendingSync);
@@ -263,6 +285,7 @@ class SyncService {
     List<Visita> source,
     ApiService api,
   ) async {
+    await _ensureProcessedIdsLoaded();
     if (_outboundBusy) {
       final list = List<Visita>.from(source);
       return SyncBatchResult(
@@ -334,7 +357,10 @@ class SyncService {
         if (lid == null || lid.isEmpty) continue;
 
         if (_processedActionIds.contains(lid)) {
-          list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+          list[idx] = v.copyWith(
+            syncStatus: SyncStatus.synced,
+            syncConfirmedAt: v.syncConfirmedAt ?? DateTime.now().toUtc(),
+          );
           omitted++;
           continue;
         }
@@ -346,13 +372,17 @@ class SyncService {
           final saved = await api
               .registrarVisita(v)
               .timeout(_kRegistrarTimeout);
-          _processedActionIds.add(lid);
+          await acknowledgeActionProcessed(lid);
           list[idx] = _mergeServerResponse(v, saved);
           synced++;
+          fieldLog('Sync', '[batch][${v.id}] ACK confirmado');
         } on ApiHttpException catch (e) {
           if (_isDuplicateHttp(e)) {
-            _processedActionIds.add(lid);
-            list[idx] = v.copyWith(syncStatus: SyncStatus.synced);
+            await acknowledgeActionProcessed(lid);
+            list[idx] = v.copyWith(
+              syncStatus: SyncStatus.synced,
+              syncConfirmedAt: DateTime.now().toUtc(),
+            );
             omitted++;
           } else {
             errorDetails.add(_syncFailureDetail(list[idx], e));

@@ -11,6 +11,7 @@ import 'visitas_api_payload.dart';
 const Duration _kGetRutaTimeout = Duration(seconds: 45);
 const Duration _kPostVisitaTimeout = Duration(seconds: 25);
 const Duration _kPostSyncTimeout = Duration(seconds: 45);
+const Duration _kPostTelemetryTimeout = Duration(seconds: 20);
 
 /// Resultado de [ApiService.checkReachability] (OpenAPI `GET …/openapi.json`).
 enum ApiReachabilityKind {
@@ -104,6 +105,14 @@ class ApiReachabilityOutcome {
           : 'Error al comprobar el servidor: $s',
     );
   }
+}
+
+/// ACK de telemetría (`POST /operaciones/heartbeat` o `/operaciones/gps_track`).
+class TelemetryAck {
+  const TelemetryAck({required this.confirmed, this.serverTimestamp});
+
+  final bool confirmed;
+  final DateTime? serverTimestamp;
 }
 
 /// Respuesta de POST `/app_distribuidora/visitas/sync` (`SyncResponse` en OpenAPI).
@@ -350,6 +359,69 @@ class ApiService {
     if (v is int) return v;
     if (v is num) return v.toInt();
     return int.tryParse(v.toString()) ?? 0;
+  }
+
+  /// POST `/operaciones/heartbeat` — sesión operacional viva + GPS.
+  Future<TelemetryAck> postHeartbeat(Map<String, dynamic> payload) async {
+    return _postTelemetryAck('operaciones/heartbeat', payload);
+  }
+
+  /// POST `/operaciones/gps_track` — puntos GPS para km recorridos.
+  Future<TelemetryAck> postGpsTrack(Map<String, dynamic> payload) async {
+    return _postTelemetryAck('operaciones/gps_track', payload);
+  }
+
+  Future<TelemetryAck> _postTelemetryAck(
+    String path,
+    Map<String, dynamic> payload,
+  ) async {
+    final uri = _uri(path);
+    final resp = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(_kPostTelemetryTimeout);
+
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw ApiHttpException(resp.statusCode, resp.body);
+    }
+
+    if (resp.body.isEmpty) {
+      return const TelemetryAck(confirmed: true);
+    }
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(resp.body);
+    } on FormatException {
+      return const TelemetryAck(confirmed: true);
+    }
+
+    if (decoded is! Map) {
+      return const TelemetryAck(confirmed: true);
+    }
+
+    final m = Map<String, dynamic>.from(decoded);
+    final ack = m['ack'] ?? m['confirmed'] ?? m['synced'] ?? m['ok'];
+    final confirmed = ack == true ||
+        ack == 1 ||
+        (ack is String && ack.toLowerCase() == 'true');
+
+    DateTime? serverTs;
+    final tsRaw = m['server_timestamp'] ?? m['timestamp'] ?? m['sync_confirmed_at'];
+    if (tsRaw is String) {
+      serverTs = DateTime.tryParse(tsRaw);
+    }
+
+    return TelemetryAck(
+      confirmed: confirmed || resp.statusCode == 200,
+      serverTimestamp: serverTs,
+    );
   }
 }
 

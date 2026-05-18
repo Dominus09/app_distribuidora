@@ -152,6 +152,7 @@ class Visita {
     this.fotoPath,
     this.syncStatus = SyncStatus.synced,
     this.localActionId,
+    this.syncConfirmedAt,
   });
 
   /// Identificador de fila (`VisitaResponse.id` int en API → string en app).
@@ -202,6 +203,9 @@ class Visita {
   final String? fotoPath;
   final SyncStatus syncStatus;
   final String? localActionId;
+
+  /// Marca local de ACK del servidor (solo caché; no se envía en POST).
+  final DateTime? syncConfirmedAt;
 
   /// `id` numérico de la fila en backend (GET ruta). Sin esto no se debe POST (evita duplicados).
   bool get tieneIdBackend {
@@ -297,6 +301,7 @@ class Visita {
       fotoPath: _str(json, 'foto_url', 'foto_path'),
       syncStatus: _parseSyncStatus(_str(json, 'sync_status')),
       localActionId: _str(json, 'local_action_id'),
+      syncConfirmedAt: _parseDateTime(json['sync_confirmed_at']),
     );
   }
 
@@ -328,6 +333,8 @@ class Visita {
       if (fotoPath != null) 'foto_path': fotoPath,
       'sync_status': syncStatus.persistValue,
       if (localActionId != null) 'local_action_id': localActionId,
+      if (syncConfirmedAt != null)
+        'sync_confirmed_at': _fechaHoraParaJson(syncConfirmedAt!),
     };
   }
 
@@ -422,6 +429,7 @@ class Visita {
     Object? fotoPath = _sentinel,
     SyncStatus? syncStatus,
     Object? localActionId = _sentinel,
+    Object? syncConfirmedAt = _sentinel,
   }) {
     return Visita(
       id: id ?? this.id,
@@ -462,6 +470,9 @@ class Visita {
       localActionId: localActionId == _sentinel
           ? this.localActionId
           : localActionId as String?,
+      syncConfirmedAt: syncConfirmedAt == _sentinel
+          ? this.syncConfirmedAt
+          : syncConfirmedAt as DateTime?,
     );
   }
 

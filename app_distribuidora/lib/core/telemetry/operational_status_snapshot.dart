@@ -1,0 +1,78 @@
+/// Estado de enlace mostrado al vendedor (lenguaje no técnico).
+enum OperacionalEnlaceEstado {
+  online,
+  offline,
+  reintentando,
+}
+
+/// Estado del GPS en terreno.
+enum OperacionalGpsEstado {
+  activo,
+  sinSenal,
+  inactivo,
+}
+
+/// Datos listos para la tarjeta operacional del Home.
+class OperationalStatusSnapshot {
+  const OperationalStatusSnapshot({
+    required this.enlace,
+    required this.gps,
+    required this.pendientesCola,
+    required this.visitasPendientes,
+    required this.kmHoy,
+    this.ultimoHeartbeat,
+    required this.telemetriaActiva,
+    required this.sincronizando,
+  });
+
+  final OperacionalEnlaceEstado enlace;
+  final OperacionalGpsEstado gps;
+  final int pendientesCola;
+  final int visitasPendientes;
+  final double kmHoy;
+  final DateTime? ultimoHeartbeat;
+  final bool telemetriaActiva;
+  final bool sincronizando;
+
+  int get pendientesTotal => pendientesCola + visitasPendientes;
+
+  String get enlaceLabel => switch (enlace) {
+        OperacionalEnlaceEstado.online => 'En línea',
+        OperacionalEnlaceEstado.offline => 'Sin conexión',
+        OperacionalEnlaceEstado.reintentando => 'Reenviando datos',
+      };
+
+  String get gpsLabel => switch (gps) {
+        OperacionalGpsEstado.activo => 'Activo',
+        OperacionalGpsEstado.sinSenal => 'Sin señal',
+        OperacionalGpsEstado.inactivo => 'Inactivo',
+      };
+
+  String get ultimoEnvioLabel {
+    if (!telemetriaActiva) return 'Al iniciar ruta';
+    final t = ultimoHeartbeat;
+    if (t == null) return 'Aún no';
+    return _tiempoRelativo(t);
+  }
+
+  static String _tiempoRelativo(DateTime momento) {
+    final diff = DateTime.now().difference(momento);
+    if (diff.inSeconds < 45) return 'Hace un momento';
+    if (diff.inMinutes < 1) return 'Hace ${diff.inSeconds} s';
+    if (diff.inMinutes < 60) {
+      final m = diff.inMinutes;
+      return m == 1 ? 'Hace 1 min' : 'Hace $m min';
+    }
+    if (diff.inHours < 24) {
+      final h = diff.inHours;
+      return h == 1 ? 'Hace 1 h' : 'Hace $h h';
+    }
+    return 'Hace más de un día';
+  }
+
+  String get kmLabel {
+    if (kmHoy < 0.1) return '0 km';
+    if (kmHoy < 10) return '${kmHoy.toStringAsFixed(1)} km';
+    return '${kmHoy.round()} km';
+  }
+}
