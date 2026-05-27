@@ -28,8 +28,7 @@ class WriteAheadVisitSync {
 
     await vendedorService.persistVisitasToDisk(scope, next);
 
-    if (updated.syncStatus.necesitaPushRemoto ||
-        updated.syncStatus == SyncStatus.syncError) {
+    if (updated.requiereRespaldoOutbox) {
       await telemetry.backupPendingVisita(updated);
     }
 

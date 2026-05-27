@@ -19,7 +19,9 @@ class OperationalStatusSnapshot {
     required this.gps,
     required this.pendientesCola,
     required this.visitasPendientes,
+    this.visitasSyncPendientes,
     this.deadLetterCount = 0,
+    this.legacyNullFechaPending = 0,
     required this.kmHoy,
     this.ultimoHeartbeat,
     required this.telemetriaActiva,
@@ -28,15 +30,29 @@ class OperationalStatusSnapshot {
 
   final OperacionalEnlaceEstado enlace;
   final OperacionalGpsEstado gps;
+  /// Ítems en SQLite outbox (heartbeat, gps, visita_sync).
   final int pendientesCola;
+  /// Visitas en memoria con `pending_sync` / error (puede incluir GET servidor).
   final int visitasPendientes;
+  final int? visitasSyncPendientes;
   final int deadLetterCount;
+  /// Pendientes sin `fecha_operativa` (legacy fuera del scope actual).
+  final int legacyNullFechaPending;
   final double kmHoy;
   final DateTime? ultimoHeartbeat;
   final bool telemetriaActiva;
   final bool sincronizando;
 
-  int get pendientesTotal => pendientesCola + visitasPendientes;
+  int get visitasSyncCount => visitasSyncPendientes ?? visitasPendientes;
+
+  /// Total mostrado en UI (desglosar con [colaSqliteLabel] / [visitasSyncLabel]).
+  int get pendientesTotal => pendientesCola + visitasSyncCount;
+
+  String get colaSqliteLabel =>
+      pendientesCola == 0 ? '0' : '$pendientesCola';
+
+  String get visitasSyncLabel =>
+      visitasSyncCount == 0 ? '0' : '$visitasSyncCount';
 
   String get enlaceLabel => switch (enlace) {
         OperacionalEnlaceEstado.online => 'En línea',

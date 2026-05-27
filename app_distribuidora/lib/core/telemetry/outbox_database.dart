@@ -9,6 +9,7 @@ import '../session/session_manager.dart';
 import '../sync/outbox_sync_state.dart';
 import '../sync/processed_action_record.dart';
 import '../utils/field_log.dart';
+import 'outbox_observability.dart';
 import 'gps_km_calculator.dart';
 import 'outbox_item_type.dart';
 
@@ -360,6 +361,27 @@ class OutboxDatabase {
     }
   }
 
+  /// Filtro estricto por scope: con fecha activa NO incluye filas legacy sin fecha.
+  void _appendScopeFilter(
+    StringBuffer where,
+    List<Object> args, {
+    OperationalScope? scope,
+    bool visitaRutaFilter = true,
+  }) {
+    final fecha = scope?.fechaOperativa;
+    final rutaId = scope?.rutaId;
+    if (fecha != null && fecha.isNotEmpty) {
+      where.write(' AND fecha_operativa = ?');
+      args.add(fecha);
+    }
+    if (visitaRutaFilter && rutaId != null && rutaId >= 1) {
+      where.write(
+        " AND (item_type != '${OutboxItemType.visitaSync.value}' OR ruta_id = ?)",
+      );
+      args.add(rutaId);
+    }
+  }
+
   Future<int> enqueue({
     required String vendedorId,
     required OutboxItemType type,
@@ -369,14 +391,17 @@ class OutboxDatabase {
     int? rutaId,
     String? actionId,
     String? endpoint,
+    String? source,
+    String? stackSnippet,
   }) async {
     final vid = _requireVendedor(vendedorId);
     final body = Map<String, dynamic>.from(payload)
       ..['vendedor_id'] = vid;
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
+    var insertId = -1;
     try {
-      return await db.insert('outbox', {
+      insertId = await db.insert('outbox', {
         'vendedor_id': vid,
         'item_type': type.value,
         'payload': jsonEncode(body),
@@ -392,11 +417,55 @@ class OutboxDatabase {
       });
     } on DatabaseException catch (e) {
       if (idempotencyKey != null && e.isUniqueConstraintError()) {
-        fieldLog('OutboxDB', 'duplicado v=$vid key=$idempotencyKey');
-        return -1;
+        await db.update(
+          'outbox',
+          {
+            'payload': jsonEncode(body),
+            'sync_state': OutboxSyncState.pending.dbValue,
+            'synced': 0,
+          },
+          where: 'vendedor_id = ? AND idempotency_key = ?',
+          whereArgs: [vid, idempotencyKey],
+        );
+        fieldLog('OutboxDB', 'idempotency UPDATE v=$vid key=$idempotencyKey');
+        insertId = -1;
+      } else {
+        rethrow;
       }
-      rethrow;
     }
+    final pending = await pendingCount(
+      vendedorId: vid,
+      scope: fechaOperativa != null && rutaId != null
+          ? OperationalScope(
+              vendedorId: vid,
+              fechaOperativa: fechaOperativa,
+              rutaId: rutaId,
+            )
+          : fechaOperativa != null
+              ? OperationalScope(
+                  vendedorId: vid,
+                  fechaOperativa: fechaOperativa,
+                )
+              : null,
+    );
+    OutboxObservability.instance.recordEnqueue(
+      type: type,
+      source: source ?? 'unknown',
+      endpoint: endpoint,
+      idempotencyKey: idempotencyKey,
+      scope: fechaOperativa != null
+          ? OperationalScope(
+              vendedorId: vid,
+              fechaOperativa: fechaOperativa,
+              rutaId: rutaId,
+            )
+          : null,
+      queueSizeAfter: pending,
+      insertId: insertId,
+      payloadSummary: OutboxObservability.summarizePayload(body),
+      stackSnippet: stackSnippet,
+    );
+    return insertId;
   }
 
   Future<List<OutboxRow>> pendingItems({
@@ -407,25 +476,12 @@ class OutboxDatabase {
     final vid = _requireVendedor(vendedorId);
     final db = await database;
     final now = DateTime.now().toUtc().toIso8601String();
-    final fecha = scope?.fechaOperativa;
-    final rutaId = scope?.rutaId;
     final where = StringBuffer(
       "vendedor_id = ? AND sync_state IN ('pending', 'failed', 'syncing') "
       'AND (next_retry_at IS NULL OR next_retry_at <= ?)',
     );
     final args = <Object>[vid, now];
-    if (fecha != null && fecha.isNotEmpty) {
-      where.write(
-        ' AND (fecha_operativa IS NULL OR fecha_operativa = ?)',
-      );
-      args.add(fecha);
-    }
-    if (rutaId != null && rutaId >= 1) {
-      where.write(
-        " AND (item_type != '${OutboxItemType.visitaSync.value}' OR ruta_id IS NULL OR ruta_id = ?)",
-      );
-      args.add(rutaId);
-    }
+    _appendScopeFilter(where, args, scope: scope, visitaRutaFilter: true);
     final rows = await db.query(
       'outbox',
       where: where.toString(),
@@ -442,27 +498,100 @@ class OutboxDatabase {
   }) async {
     final vid = _requireVendedor(vendedorId);
     final db = await database;
-    final fecha = scope?.fechaOperativa;
-    final rutaId = scope?.rutaId;
     final where = StringBuffer(
       "vendedor_id = ? AND sync_state IN ('pending', 'failed', 'syncing')",
     );
     final args = <Object>[vid];
-    if (fecha != null && fecha.isNotEmpty) {
-      where.write(' AND (fecha_operativa IS NULL OR fecha_operativa = ?)');
-      args.add(fecha);
-    }
-    if (rutaId != null && rutaId >= 1) {
-      where.write(
-        " AND (item_type != '${OutboxItemType.visitaSync.value}' OR ruta_id IS NULL OR ruta_id = ?)",
-      );
-      args.add(rutaId);
-    }
+    _appendScopeFilter(where, args, scope: scope, visitaRutaFilter: true);
     final r = await db.rawQuery(
       'SELECT COUNT(*) AS c FROM outbox WHERE ${where.toString()}',
       args,
     );
     return Sqflite.firstIntValue(r) ?? 0;
+  }
+
+  /// Resumen diagnóstico: conteos por tipo y estado (scope estricto).
+  Future<OutboxDiagnostics> loadDiagnostics({
+    required String vendedorId,
+    OperationalScope? scope,
+    int stuckSampleLimit = 15,
+  }) async {
+    final vid = _requireVendedor(vendedorId);
+    final db = await database;
+
+    String scopeSql = '';
+    final scopeArgs = <Object>[vid];
+    if (scope?.fechaOperativa != null && scope!.fechaOperativa.isNotEmpty) {
+      scopeSql = ' AND fecha_operativa = ?';
+      scopeArgs.add(scope.fechaOperativa);
+      if (scope.rutaId != null && scope.rutaId! >= 1) {
+        scopeSql +=
+            " AND (item_type != '${OutboxItemType.visitaSync.value}' OR ruta_id = ?)";
+        scopeArgs.add(scope.rutaId!);
+      }
+    }
+
+    final byTypeRows = await db.rawQuery('''
+      SELECT item_type, sync_state, COUNT(*) AS c, MAX(retry_count) AS max_retry
+      FROM outbox
+      WHERE vendedor_id = ?$scopeSql
+      GROUP BY item_type, sync_state
+      ORDER BY c DESC
+    ''', scopeArgs);
+
+    final pending = await pendingCount(vendedorId: vid, scope: scope);
+
+    final stuckRows = await db.rawQuery('''
+      SELECT id, item_type, endpoint, retry_count, sync_state, last_error,
+             fecha_operativa, ruta_id, action_id, created_at
+      FROM outbox
+      WHERE vendedor_id = ?$scopeSql
+        AND sync_state IN ('pending', 'failed', 'syncing')
+      ORDER BY retry_count DESC, created_at ASC
+      LIMIT $stuckSampleLimit
+    ''', scopeArgs);
+
+    final legacyNullFecha = scope?.fechaOperativa != null
+        ? Sqflite.firstIntValue(
+              await db.rawQuery(
+                '''SELECT COUNT(*) AS c FROM outbox
+                   WHERE vendedor_id = ? AND fecha_operativa IS NULL
+                     AND sync_state IN ('pending', 'failed', 'syncing')''',
+                [vid],
+              ),
+            ) ??
+            0
+        : 0;
+
+    final dead = await deadLetterCount(vendedorId: vid, scope: scope);
+
+    return OutboxDiagnostics(
+      pendingCount: pending,
+      deadLetterCount: dead,
+      legacyNullFechaPending: legacyNullFecha,
+      byTypeAndState: byTypeRows
+          .map(
+            (r) => OutboxTypeStateCount(
+              itemType: r['item_type']! as String,
+              syncState: r['sync_state'] as String? ?? 'pending',
+              count: r['c']! as int,
+              maxRetry: r['max_retry'] as int? ?? 0,
+            ),
+          )
+          .toList(),
+      stuckSamples: stuckRows.map(OutboxStuckSample.fromRow).toList(),
+    );
+  }
+
+  /// Elimina filas ya sincronizadas (no esperar 7 días).
+  Future<int> purgeSyncedNow(String vendedorId) async {
+    final vid = _requireVendedor(vendedorId);
+    final db = await database;
+    return db.delete(
+      'outbox',
+      where: "vendedor_id = ? AND sync_state = 'synced'",
+      whereArgs: [vid],
+    );
   }
 
   Future<void> markSynced(
@@ -530,18 +659,36 @@ class OutboxDatabase {
       "vendedor_id = ? AND sync_state = 'syncing'",
     );
     final args = <Object>[vid];
-    if (scope?.fechaOperativa != null) {
-      where.write(
-        ' AND (fecha_operativa IS NULL OR fecha_operativa = ?)',
-      );
-      args.add(scope!.fechaOperativa);
-    }
+    _appendScopeFilter(where, args, scope: scope, visitaRutaFilter: false);
     await db.update(
       'outbox',
       {'sync_state': OutboxSyncState.pending.dbValue},
       where: where.toString(),
       whereArgs: args,
     );
+  }
+
+  /// Mueve a dead letter ítems legacy sin `fecha_operativa` (fuera de scope).
+  Future<int> archiveLegacyNullFechaPending(String vendedorId) async {
+    final vid = _requireVendedor(vendedorId);
+    final rows = await pendingItems(
+      vendedorId: vid,
+      scope: null,
+      limit: 500,
+    );
+    var moved = 0;
+    for (final row in rows) {
+      if (row.fechaOperativa != null && row.fechaOperativa!.isNotEmpty) {
+        continue;
+      }
+      await moveToDeadLetter(
+        row,
+        endpoint: row.endpoint ?? row.itemType.value,
+        lastError: 'legacy sin fecha_operativa',
+      );
+      moved++;
+    }
+    return moved;
   }
 
   Future<void> moveToDeadLetter(
@@ -849,5 +996,84 @@ class OutboxDatabase {
       uploaded: (m['uploaded'] as int? ?? 0) == 1,
     );
   }
+}
 
+/// Resumen de diagnóstico de la cola outbox.
+class OutboxDiagnostics {
+  const OutboxDiagnostics({
+    required this.pendingCount,
+    required this.deadLetterCount,
+    required this.legacyNullFechaPending,
+    required this.byTypeAndState,
+    required this.stuckSamples,
+  });
+
+  final int pendingCount;
+  final int deadLetterCount;
+  final int legacyNullFechaPending;
+  final List<OutboxTypeStateCount> byTypeAndState;
+  final List<OutboxStuckSample> stuckSamples;
+
+  Map<String, int> get countByItemType {
+    final m = <String, int>{};
+    for (final row in byTypeAndState) {
+      m[row.itemType] = (m[row.itemType] ?? 0) + row.count;
+    }
+    return m;
+  }
+}
+
+class OutboxTypeStateCount {
+  const OutboxTypeStateCount({
+    required this.itemType,
+    required this.syncState,
+    required this.count,
+    required this.maxRetry,
+  });
+
+  final String itemType;
+  final String syncState;
+  final int count;
+  final int maxRetry;
+}
+
+class OutboxStuckSample {
+  const OutboxStuckSample({
+    required this.id,
+    required this.itemType,
+    required this.endpoint,
+    required this.retryCount,
+    required this.syncState,
+    required this.lastError,
+    required this.fechaOperativa,
+    required this.rutaId,
+    required this.actionId,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String itemType;
+  final String? endpoint;
+  final int retryCount;
+  final String syncState;
+  final String? lastError;
+  final String? fechaOperativa;
+  final int? rutaId;
+  final String? actionId;
+  final DateTime createdAt;
+
+  factory OutboxStuckSample.fromRow(Map<String, Object?> r) {
+    return OutboxStuckSample(
+      id: r['id']! as int,
+      itemType: r['item_type']! as String,
+      endpoint: r['endpoint'] as String?,
+      retryCount: r['retry_count']! as int,
+      syncState: r['sync_state'] as String? ?? 'pending',
+      lastError: r['last_error'] as String?,
+      fechaOperativa: r['fecha_operativa'] as String?,
+      rutaId: r['ruta_id'] as int?,
+      actionId: r['action_id'] as String?,
+      createdAt: DateTime.parse(r['created_at']! as String).toLocal(),
+    );
+  }
 }

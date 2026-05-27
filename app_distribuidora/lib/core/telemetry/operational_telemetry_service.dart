@@ -11,10 +11,13 @@ import 'device_context_service.dart';
 import 'gps_tracking_service.dart';
 import 'operational_status_snapshot.dart';
 import 'outbox_database.dart';
+import 'outbox_item_type.dart';
+import 'outbox_observability.dart';
 import 'outbox_queue_service.dart';
 import 'telemetry_config.dart';
+import 'timer_registry.dart';
 
-/// Telemetría por vendedor con **un solo timer** coordinador (menos carga CPU).
+/// Telemetría por vendedor con **un solo timer** coordinador.
 class OperationalTelemetryService {
   OperationalTelemetryService({
     required String vendedorId,
@@ -75,11 +78,17 @@ class OperationalTelemetryService {
   }
 
   void startEnRuta() {
-    if (_active) return;
+    if (_active) {
+      fieldLogImportant(
+        'Telemetry',
+        'startEnRuta ignorado: ya activo v=$_vendedorId',
+      );
+      return;
+    }
     if (!TelemetryRuntimeRegistry.instance.tryAcquire(_vendedorId, this)) {
       fieldLogImportant(
         'Telemetry',
-        'coordinador ya activo para otro owner v=$_vendedorId',
+        'coordinador ya activo — no se inicia duplicado v=$_vendedorId',
       );
       return;
     }
@@ -99,22 +108,37 @@ class OperationalTelemetryService {
       TelemetryConfig.coordinatorTickInterval,
       (_) => unawaited(_runCoordinatorTick()),
     );
-    Future<void>.delayed(Duration.zero, _runCoordinatorTick);
-    fieldLog('Telemetry', 'coordinador v=$_vendedorId', force: true);
+    TimerRegistry.instance.register(
+      name: 'telemetry_coordinator',
+      owner: 'OperationalTelemetryService',
+      detail: 'v=$_vendedorId',
+    );
+    unawaited(_runCoordinatorTick());
+    fieldLog('Telemetry', 'coordinador ON v=$_vendedorId scope=$_scope', force: true);
   }
 
   void stop() {
     _coordinatorTimer?.cancel();
     _coordinatorTimer = null;
+    TimerRegistry.instance.unregister('telemetry_coordinator');
     _gps.stop();
     _active = false;
     _coordinatorBusy = false;
     TelemetryRuntimeRegistry.instance.release(this);
+    fieldLog('Telemetry', 'coordinador OFF v=$_vendedorId', force: true);
   }
 
   Future<void> onConnectivityRestored() async {
     await _queue.flushPending(maxItems: TelemetryConfig.maxOutboxFlushPerTick);
     await _runPeriodicVisitaSync();
+  }
+
+  /// Flush periódico aunque no esté en ruta (solo cola scoped).
+  Future<int> flushOutboxBackground() async {
+    return _queue.flushPending(
+      onlyWhenReachable: true,
+      maxItems: TelemetryConfig.maxOutboxFlushPerTick,
+    );
   }
 
   Future<void> onAppPaused() async {
@@ -127,9 +151,19 @@ class OperationalTelemetryService {
     );
   }
 
+  Future<OutboxDiagnostics> loadOutboxDiagnostics() async {
+    return _db.loadDiagnostics(
+      vendedorId: _vendedorId,
+      scope: _scope,
+    );
+  }
+
   Future<double> kmRecorridosHoy() async {
     if (!_active) return 0;
-    return _db.kmRecorridosHoy(_vendedorId);
+    return _db.kmRecorridosHoy(
+      _vendedorId,
+      fechaOperativa: _scope?.fechaOperativa,
+    );
   }
 
   Future<OperationalStatusSnapshot> loadStatusSnapshot({
@@ -138,31 +172,38 @@ class OperationalTelemetryService {
     required bool sincronizando,
     required int visitasPendientes,
   }) async {
-    final results = await Future.wait<Object?>([
-      _db.pendingCount(vendedorId: _vendedorId, scope: _scope),
-      _db.deadLetterCount(vendedorId: _vendedorId, scope: _scope),
-      enRuta
-          ? _db.kmRecorridosHoy(
-              _vendedorId,
-              fechaOperativa: _scope?.fechaOperativa,
-            )
-          : Future<double>.value(0),
-      _db.getMeta(vendedorId: _vendedorId, key: 'last_heartbeat_at'),
-      _db.getMeta(vendedorId: _vendedorId, key: 'last_gps_at'),
-    ]);
+    final diag = await loadOutboxDiagnostics();
 
-    final cola = results[0]! as int;
-    final deadLetters = results[1]! as int;
-    final km = results[2]! as double;
+    OutboxObservability.instance.logScopeContext(
+      event: 'status_snapshot',
+      scope: _scope,
+      queuePending: diag.pendingCount,
+      visitasSyncPending: visitasPendientes,
+      byType: diag.countByItemType,
+    );
+    OutboxObservability.instance.logStatusBreakdown(
+      outboxSqlitePending: diag.pendingCount,
+      visitasSyncPendientes: visitasPendientes,
+      displayedTotal: diag.pendingCount + visitasPendientes,
+      outboxByType: diag.countByItemType,
+    );
+
+    final km = enRuta
+        ? await _db.kmRecorridosHoy(
+            _vendedorId,
+            fechaOperativa: _scope?.fechaOperativa,
+          )
+        : 0.0;
 
     DateTime? ultimoHb;
-    final hbRaw = results[3] as String?;
+    final hbRaw =
+        await _db.getMeta(vendedorId: _vendedorId, key: 'last_heartbeat_at');
     if (hbRaw != null) {
       ultimoHb = DateTime.tryParse(hbRaw)?.toLocal();
     }
 
     DateTime? ultimoGps;
-    final gpsAtRaw = results[4] as String?;
+    final gpsAtRaw = await _db.getMeta(vendedorId: _vendedorId, key: 'last_gps_at');
     if (gpsAtRaw != null) {
       ultimoGps = DateTime.tryParse(gpsAtRaw)?.toLocal();
     }
@@ -187,7 +228,7 @@ class OperationalTelemetryService {
       enlace = OperacionalEnlaceEstado.offline;
     } else if (sincronizando ||
         _queue.isFlushing ||
-        (cola > 0 && puedeEnviarAlServidor)) {
+        (diag.pendingCount > 0 && puedeEnviarAlServidor)) {
       enlace = OperacionalEnlaceEstado.reintentando;
     } else if (enRuta && ultimoHb != null) {
       final age = DateTime.now().difference(ultimoHb);
@@ -203,9 +244,11 @@ class OperationalTelemetryService {
     return OperationalStatusSnapshot(
       enlace: enlace,
       gps: gpsEstado,
-      pendientesCola: cola,
+      pendientesCola: diag.pendingCount,
       visitasPendientes: visitasPendientes,
-      deadLetterCount: deadLetters,
+      visitasSyncPendientes: visitasPendientes,
+      deadLetterCount: diag.deadLetterCount,
+      legacyNullFechaPending: diag.legacyNullFechaPending,
       kmHoy: km,
       ultimoHeartbeat: ultimoHb,
       telemetriaActiva: enRuta && _active,
@@ -265,11 +308,14 @@ class OperationalTelemetryService {
         'visitas_pendientes': pending,
         'app_version': device['app_version'],
         'dispositivo': device['dispositivo'],
-        'idempotency_key': _queue.newHeartbeatIdempotencyKey(),
+        'idempotency_key': _queue.heartbeatIdempotencyKeyFor(now),
       };
 
       if (enqueueOnly) {
-        await _queue.enqueueHeartbeat(payload);
+        await _queue.enqueueHeartbeat(
+          payload,
+          source: 'OperationalTelemetry.onAppPaused',
+        );
         return;
       }
 
@@ -285,10 +331,16 @@ class OperationalTelemetryService {
           );
           fieldLog('Heartbeat', 'OK v=$_vendedorId', throttle: true);
         } else {
-          await _queue.enqueueHeartbeat(payload);
+          await _queue.enqueueHeartbeat(
+            payload,
+            source: 'OperationalTelemetry._sendHeartbeat!ack',
+          );
         }
       } catch (e) {
-        await _queue.enqueueHeartbeat(payload);
+        await _queue.enqueueHeartbeat(
+          payload,
+          source: 'OperationalTelemetry._sendHeartbeat.catch',
+        );
         fieldLogImportant('Heartbeat', 'falló v=$_vendedorId: $e');
       }
 
@@ -304,11 +356,12 @@ class OperationalTelemetryService {
     if (points.isEmpty) return;
 
     final sessionId = SessionManager.instance.sessionId;
+    final ids = points.map((p) => p.id).toList();
     final payload = {
       'vendedor_id': _vendedorId,
       if (sessionId != null) 'session_id': sessionId,
       'timestamp': DateTime.now().toUtc().toIso8601String(),
-      'point_ids': points.map((p) => p.id).toList(),
+      'point_ids': ids,
       'puntos': points
           .map(
             (p) => {
@@ -319,7 +372,7 @@ class OperationalTelemetryService {
             },
           )
           .toList(),
-      'idempotency_key': _queue.newHeartbeatIdempotencyKey(),
+      'idempotency_key': _queue.gpsBatchIdempotencyKey(),
     };
 
     try {
@@ -327,15 +380,18 @@ class OperationalTelemetryService {
           .postGpsTrack(payload)
           .timeout(TelemetryConfig.telemetryHttpTimeout);
       if (ack.confirmed) {
-        await _db.markGpsPointsUploaded(
-          points.map((p) => p.id).toList(),
-          vendedorId: _vendedorId,
-        );
+        await _db.markGpsPointsUploaded(ids, vendedorId: _vendedorId);
       } else {
-        await _queue.enqueueGpsTrack(payload);
+        await _queue.enqueueGpsTrack(
+          payload,
+          source: 'OperationalTelemetry._uploadPendingGpsPoints!ack',
+        );
       }
     } catch (_) {
-      await _queue.enqueueGpsTrack(payload);
+      await _queue.enqueueGpsTrack(
+        payload,
+        source: 'OperationalTelemetry._uploadPendingGpsPoints.catch',
+      );
     }
   }
 
@@ -351,9 +407,19 @@ class OperationalTelemetryService {
   }
 
   Future<void> backupPendingVisita(Visita visita) async {
-    if (visita.syncStatus == SyncStatus.pendingSync ||
-        visita.syncStatus == SyncStatus.syncError) {
-      await _queue.enqueueVisitaBackup(visita);
+    if (!visita.requiereRespaldoOutbox) {
+      OutboxObservability.instance.recordEnqueueSkipped(
+        source: 'OperationalTelemetry.backupPendingVisita',
+        reason: 'sin_cambio_local',
+        tipo: OutboxItemType.visitaSync.value,
+        visitaId: visita.id,
+        stackSnippet: OutboxObservability.captureCallerStack(),
+      );
+      return;
     }
+    await _queue.enqueueVisitaBackup(
+      visita,
+      source: 'OperationalTelemetry.backupPendingVisita',
+    );
   }
 }

@@ -3,7 +3,9 @@ import 'dart:async';
 import '../../features/vendedor/services/location_service.dart';
 import '../utils/field_log.dart';
 import 'outbox_database.dart';
+import 'outbox_observability.dart';
 import 'telemetry_config.dart';
+import 'timer_registry.dart';
 
 /// Seguimiento GPS: throttling, sin solapar ticks, precisión media.
 class GpsTrackingService {
@@ -27,6 +29,10 @@ class GpsTrackingService {
 
   void start(String vendedorId, {String? fechaOperativa}) {
     if (_running && _vendedorId == vendedorId) {
+      fieldLogImportant(
+        'GPS-Track',
+        'start ignorado: ya activo v=$vendedorId',
+      );
       _fechaOperativa = fechaOperativa;
       return;
     }
@@ -41,6 +47,11 @@ class GpsTrackingService {
       TelemetryConfig.gpsPollMinInterval,
       (_) => unawaited(_tick()),
     );
+    TimerRegistry.instance.register(
+      name: 'gps_poll',
+      owner: 'GpsTrackingService',
+      detail: 'v=$vendedorId',
+    );
     Future<void>.delayed(Duration.zero, _tick);
   }
 
@@ -51,6 +62,7 @@ class GpsTrackingService {
   void stop() {
     _pollTimer?.cancel();
     _pollTimer = null;
+    TimerRegistry.instance.unregister('gps_poll');
     _running = false;
     _tickInProgress = false;
     _vendedorId = null;
@@ -122,6 +134,14 @@ class GpsTrackingService {
           vendedorId: vid,
           key: 'last_gps_at',
           value: snap.capturedAt.toUtc().toIso8601String(),
+        );
+        final unuploaded = await _db.unuploadedGpsPoints(
+          vendedorId: vid,
+          limit: 500,
+        );
+        OutboxObservability.instance.logGpsPointStored(
+          vendedorId: vid,
+          totalUnuploaded: unuploaded.length,
         );
         fieldLog('GPS-Track', 'punto v=$vid', throttle: true);
       }

@@ -117,6 +117,35 @@ extension SyncStatusUi on SyncStatus {
   bool get isDeadLetter => this == SyncStatus.deadLetter;
 }
 
+extension VisitaOutboxPolicy on Visita {
+  /// GET ruta a veces trae `pending_sync` en paradas no visitadas; no es cola outbox.
+  bool get esPendingSyncFantasmaDelServidor {
+    return syncStatus == SyncStatus.pendingSync &&
+        estado == VisitaEstado.pendiente &&
+        (localActionId == null || localActionId!.isEmpty) &&
+        fechaHoraVisita == null &&
+        latVisita == null &&
+        lonVisita == null;
+  }
+
+  /// Normaliza fila del servidor sin acción local a `synced` (solo estado UI/sync).
+  Visita normalizarSyncStatusTrasCargaServidor() {
+    if (esPendingSyncFantasmaDelServidor) {
+      return copyWith(syncStatus: SyncStatus.synced);
+    }
+    return this;
+  }
+
+  /// Solo encolar outbox si hubo acción local real (no fila cruda del GET ruta).
+  bool get requiereRespaldoOutbox {
+    if (!syncStatus.necesitaPushRemoto) return false;
+    if (estado != VisitaEstado.pendiente) return true;
+    if (fechaHoraVisita != null) return true;
+    if (latVisita != null && lonVisita != null) return true;
+    return false;
+  }
+}
+
 extension TipoIncidenciaUi on TipoIncidencia {
   String get label => switch (this) {
     TipoIncidencia.localCerrado => 'Local cerrado',

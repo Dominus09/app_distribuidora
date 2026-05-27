@@ -40,12 +40,18 @@ class VendedorService {
     required List<Visita> servidor,
     required List<Visita> locales,
   }) {
-    if (locales.isEmpty) return List<Visita>.from(servidor);
+    if (locales.isEmpty) {
+      return servidor
+          .map((s) => s.normalizarSyncStatusTrasCargaServidor())
+          .toList();
+    }
     final localPorId = {for (final v in locales) v.id: v};
     final idsServidor = servidor.map((e) => e.id).toSet();
     final merged = servidor.map((s) {
       final l = localPorId[s.id];
-      if (l == null) return s;
+      if (l == null) {
+        return s.normalizarSyncStatusTrasCargaServidor();
+      }
       return VisitaReconciliation.reconciliar(servidor: s, local: l);
     }).toList();
 

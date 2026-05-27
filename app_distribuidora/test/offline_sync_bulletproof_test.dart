@@ -104,6 +104,27 @@ void main() {
     });
   });
 
+  group('VisitaOutboxPolicy', () {
+    test('pending_sync del GET sin acción local no requiere outbox', () {
+      final v = _v(sync: SyncStatus.pendingSync);
+      expect(v.esPendingSyncFantasmaDelServidor, isTrue);
+      expect(v.requiereRespaldoOutbox, isFalse);
+      expect(
+        v.normalizarSyncStatusTrasCargaServidor().syncStatus,
+        SyncStatus.synced,
+      );
+    });
+
+    test('visita marcada local sí requiere outbox', () {
+      final v = _v(
+        sync: SyncStatus.pendingSync,
+        estado: VisitaEstado.visitado,
+        actionId: 'a1',
+      );
+      expect(v.requiereRespaldoOutbox, isTrue);
+    });
+  });
+
   group('UUID action ids', () {
     test('generateLocalActionId es UUID v4', () {
       final svc = VendedorService();

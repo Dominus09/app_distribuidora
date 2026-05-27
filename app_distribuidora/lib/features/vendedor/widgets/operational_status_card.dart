@@ -106,12 +106,28 @@ class OperationalStatusCard extends StatelessWidget {
                 Expanded(
                   child: _MetricCell(
                     icon: Icons.cloud_upload_outlined,
-                    label: 'En cola',
-                    value: '${snap.pendientesTotal}',
-                    color: snap.pendientesTotal > 0
+                    label: 'Cola SQLite',
+                    value: snap.colaSqliteLabel,
+                    color: snap.pendientesCola > 0
                         ? AppColors.estadoPendiente
                         : AppColors.secondaryBlue,
-                    destacar: snap.pendientesTotal > 0,
+                    destacar: snap.pendientesCola > 0,
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 40,
+                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                ),
+                Expanded(
+                  child: _MetricCell(
+                    icon: Icons.pending_actions_outlined,
+                    label: 'Visitas sync',
+                    value: snap.visitasSyncLabel,
+                    color: snap.visitasSyncCount > 0
+                        ? AppColors.estadoPendiente
+                        : AppColors.secondaryBlue,
+                    destacar: snap.visitasSyncCount > 0,
                   ),
                 ),
                 Container(

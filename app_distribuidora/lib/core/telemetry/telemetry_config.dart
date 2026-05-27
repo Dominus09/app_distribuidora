@@ -6,11 +6,11 @@ abstract final class TelemetryConfig {
   /// Un solo timer coordinador (evita 3+ timers paralelos).
   static const Duration coordinatorTickInterval = Duration(seconds: 30);
 
-  /// Intervalo mínimo entre lecturas GPS de seguimiento.
-  static const Duration gpsPollMinInterval = Duration(seconds: 90);
+  /// Intervalo mínimo entre lecturas GPS de seguimiento (2 min).
+  static const Duration gpsPollMinInterval = Duration(minutes: 2);
 
   /// Intervalo máximo entre lecturas GPS sin movimiento relevante.
-  static const Duration gpsPollMaxInterval = Duration(seconds: 180);
+  static const Duration gpsPollMaxInterval = Duration(minutes: 2);
 
   /// Nuevo punto GPS si el desplazamiento supera este umbral (metros).
   static const double gpsMovementThresholdMeters = 100;

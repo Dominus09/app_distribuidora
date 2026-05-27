@@ -21,6 +21,9 @@ import '../services/vendedor_service.dart';
 import '../../../core/telemetry/telemetry_config.dart';
 import '../widgets/operational_status_listener.dart';
 import '../widgets/terreno_sync_banner.dart';
+import '../../../core/telemetry/outbox_observability.dart';
+import '../../../core/telemetry/timer_registry.dart';
+import 'outbox_debug_screen.dart';
 import 'ruta_screen.dart';
 
 /// Dashboard principal del vendedor (ruta desde API + caché local).
@@ -71,6 +74,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   DateTime? _apiOkBypassUntil;
   Timer? _resumeDebounce;
   Timer? _operacionalRefreshTimer;
+  Timer? _outboxBackgroundFlushTimer;
   Timer? _operacionalDebounce;
   final ValueNotifier<OperationalStatusSnapshot?> _operacionalNotifier =
       ValueNotifier<OperationalStatusSnapshot?>(null);
@@ -214,6 +218,22 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     _operacionalRefreshTimer = Timer.periodic(
       TelemetryConfig.operacionalUiRefreshInterval,
       (_) => _scheduleRefrescarEstadoOperacional(),
+    );
+    _outboxBackgroundFlushTimer = Timer.periodic(
+      TelemetryConfig.outboxFlushInterval,
+      (_) {
+        if (_connectivityOk && !_forceOffline) {
+          unawaited(_telemetry.flushOutboxBackground());
+        }
+      },
+    );
+    TimerRegistry.instance.register(
+      name: 'outbox_background_flush',
+      owner: 'VendedorHomeScreen',
+    );
+    TimerRegistry.instance.register(
+      name: 'operacional_ui_refresh',
+      owner: 'VendedorHomeScreen',
     );
   }
 
@@ -360,6 +380,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     _operacionalDebounce?.cancel();
     _resumeDebounce?.cancel();
     _operacionalRefreshTimer?.cancel();
+    _outboxBackgroundFlushTimer?.cancel();
+    TimerRegistry.instance.unregister('outbox_background_flush');
+    TimerRegistry.instance.unregister('operacional_ui_refresh');
     _apiReachProbeTimer?.cancel();
     _connectivitySub?.cancel();
     super.dispose();
@@ -389,8 +412,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       );
     }
     for (final v in _visitas) {
-      if (v.syncStatus == SyncStatus.pendingSync ||
-          v.syncStatus == SyncStatus.syncError) {
+      if (v.requiereRespaldoOutbox) {
         await _telemetry.backupPendingVisita(v);
       }
     }
@@ -502,6 +524,23 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       );
       await _vendedorService.persistVisitasToDisk(scope, merged);
       fieldLog('Ruta', 'GET ok scope=$scope n=${merged.length}');
+      final diag = await _telemetry.loadOutboxDiagnostics();
+      final visitasSync = merged
+          .where(
+            (v) =>
+                v.syncStatus == SyncStatus.pendingSync ||
+                v.syncStatus == SyncStatus.syncError,
+          )
+          .length;
+      OutboxObservability.instance.logScopeContext(
+        event: 'ruta_cargada',
+        scope: scope,
+        serverClientes: serverList.length,
+        cacheClientes: cached.length,
+        queuePending: diag.pendingCount,
+        visitasSyncPending: visitasSync,
+        byType: diag.countByItemType,
+      );
       return merged;
     } catch (e) {
       fieldLog('Ruta', 'GET ruta falló: $e');
@@ -579,11 +618,6 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         merged,
       ),
     );
-    for (final v in merged) {
-      if (v.syncStatus == SyncStatus.pendingSync) {
-        unawaited(_telemetry.backupPendingVisita(v));
-      }
-    }
     _scheduleRefrescarEstadoOperacional();
   }
 
@@ -905,6 +939,23 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         ),
         title: const Text('Inicio'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report_outlined),
+            tooltip: 'Debug outbox',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => OutboxDebugScreen(
+                    telemetry: _telemetry,
+                    vendedorId: widget.vendedorCodigo,
+                    scope: _operationalScope ?? _scopeActual,
+                    serverClientes: _visitas.length,
+                    cacheClientes: _visitas.length,
+                  ),
+                ),
+              );
+            },
+          ),
           TextButton(
             onPressed: _cerrarSesion,
             child: const Text('Cerrar sesión'),
