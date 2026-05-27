@@ -7,7 +7,7 @@ import '../models/visita.dart';
 import '../services/location_service.dart';
 import '../services/ruta_map_geolocator.dart';
 
-/// Mapa de la ruta: marcadores simples por estado, nombre en ventana nativa.
+/// Mapa de la ruta: marcadores cacheados, menos lecturas GPS y menos redraws.
 class ClientesRutaMap extends StatefulWidget {
   const ClientesRutaMap({
     super.key,
@@ -33,24 +33,47 @@ class ClientesRutaMap extends StatefulWidget {
 class ClientesRutaMapState extends State<ClientesRutaMap> {
   GoogleMapController? _controller;
   LatLng? _userLatLng;
+  Set<Marker>? _cachedMarkers;
+  String? _markersCacheKey;
 
   static const LatLng _quito = LatLng(-0.22985, -78.52495);
 
   @override
   void initState() {
     super.initState();
-    unawaited(_refreshUserLocation());
+    unawaited(_refreshUserLocationOnce());
   }
 
   @override
   void didUpdateWidget(ClientesRutaMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!_visitasStopsLocationEqual(oldWidget.visitas, widget.visitas)) {
-      _refreshMarkersFit();
+      _invalidateMarkers();
+      _fitCameraToMarkers();
     }
     if (widget.focusedVisitaId != oldWidget.focusedVisitaId) {
       _animateToFocused();
     }
+  }
+
+  void _invalidateMarkers() {
+    _cachedMarkers = null;
+    _markersCacheKey = null;
+  }
+
+  String _markersKey() {
+    final b = StringBuffer();
+    for (final v in widget.visitas) {
+      b
+        ..write(v.id)
+        ..write(v.estado.index)
+        ..write(v.latCliente)
+        ..write(v.lonCliente);
+    }
+    b.write(widget.focusedVisitaId);
+    b.write(_userLatLng?.latitude);
+    b.write(_userLatLng?.longitude);
+    return b.toString();
   }
 
   static bool _visitasStopsLocationEqual(List<Visita> a, List<Visita> b) {
@@ -59,6 +82,7 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
       if (a[i].id != b[i].id ||
           a[i].latCliente != b[i].latCliente ||
           a[i].lonCliente != b[i].lonCliente ||
+          a[i].estado != b[i].estado ||
           a[i].nombreFantasia != b[i].nombreFantasia) {
         return false;
       }
@@ -66,24 +90,28 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
     return true;
   }
 
-  Future<void> _refreshUserLocation() async {
+  Future<void> _refreshUserLocationOnce() async {
+    final cached = await widget.locationService.tryGetLastKnownPosition(
+      maxAgeSeconds: 180,
+    );
+    if (cached != null && mounted) {
+      setState(() => _userLatLng = LatLng(cached.latitude, cached.longitude));
+      _invalidateMarkers();
+      return;
+    }
     final device = await RutaMapGeolocator.tryDeviceLatLng();
     if (!mounted) return;
     if (device != null) {
       setState(() => _userLatLng = device);
+      _invalidateMarkers();
       return;
     }
     final gpsOk = await widget.locationService.isGpsAvailable();
     if (!gpsOk || !mounted) return;
-    final snap = await widget.locationService.getCurrentPosition();
+    final snap = await widget.locationService.getTrackingPosition();
     if (!mounted) return;
     setState(() => _userLatLng = LatLng(snap.latitude, snap.longitude));
-  }
-
-  Future<void> _refreshMarkersFit() async {
-    await _refreshUserLocation();
-    if (_controller == null || !mounted) return;
-    await _fitCameraToMarkers();
+    _invalidateMarkers();
   }
 
   double _markerHue(VisitaEstado e) => switch (e) {
@@ -93,6 +121,10 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
       };
 
   Set<Marker> _buildMarkers() {
+    final key = _markersKey();
+    if (_cachedMarkers != null && _markersCacheKey == key) {
+      return _cachedMarkers!;
+    }
     final out = <Marker>{};
     for (final v in widget.visitas) {
       if (v.latCliente == 0 && v.lonCliente == 0) continue;
@@ -125,6 +157,8 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
         ),
       );
     }
+    _cachedMarkers = out;
+    _markersCacheKey = key;
     return out;
   }
 
@@ -212,7 +246,6 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
   }
 
   Future<void> _onMapReady() async {
-    await _refreshUserLocation();
     if (!mounted) return;
     final c = _controller;
     if (c == null) return;
@@ -232,7 +265,6 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
     }
 
     await _fitCameraToMarkers();
-    await _animateToFocused();
   }
 
   Future<void> centerOnFirstPending() async {
@@ -247,7 +279,7 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
   }
 
   Future<void> centerOnUserLocation() async {
-    await _refreshUserLocation();
+    await _refreshUserLocationOnce();
     if (!mounted) return;
     final c = _controller;
     final u = _userLatLng;
@@ -272,6 +304,7 @@ class ClientesRutaMapState extends State<ClientesRutaMap> {
       zoomControlsEnabled: false,
       myLocationButtonEnabled: false,
       compassEnabled: true,
+      liteModeEnabled: false,
       onMapCreated: (controller) {
         _controller = controller;
         WidgetsBinding.instance.addPostFrameCallback((_) => _onMapReady());

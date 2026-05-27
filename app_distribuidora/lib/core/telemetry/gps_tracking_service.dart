@@ -5,7 +5,7 @@ import '../utils/field_log.dart';
 import 'outbox_database.dart';
 import 'telemetry_config.dart';
 
-/// Seguimiento GPS continuo: tiempo (60–120 s) o movimiento > 100 m.
+/// Seguimiento GPS: throttling, sin solapar ticks, precisión media.
 class GpsTrackingService {
   GpsTrackingService({
     required this.locationService,
@@ -19,32 +19,47 @@ class GpsTrackingService {
   DateTime? _lastCaptureAt;
   Timer? _pollTimer;
   String? _vendedorId;
+  String? _fechaOperativa;
   bool _running = false;
+  bool _tickInProgress = false;
 
   LocationSnapshot? get lastKnown => _lastKnown;
 
-  void start(String vendedorId) {
-    if (_running && _vendedorId == vendedorId) return;
+  void start(String vendedorId, {String? fechaOperativa}) {
+    if (_running && _vendedorId == vendedorId) {
+      _fechaOperativa = fechaOperativa;
+      return;
+    }
     stop();
     _vendedorId = vendedorId;
+    _fechaOperativa = fechaOperativa;
+    _lastKnown = null;
+    _lastCaptureAt = null;
     _running = true;
-    fieldLog('GPS-Track', 'inicio vendedor=$vendedorId');
+    fieldLog('GPS-Track', 'inicio v=$vendedorId', force: true);
     _pollTimer = Timer.periodic(
       TelemetryConfig.gpsPollMinInterval,
       (_) => unawaited(_tick()),
     );
-    unawaited(_tick());
+    Future<void>.delayed(Duration.zero, _tick);
+  }
+
+  void setFechaOperativa(String? fechaOperativa) {
+    _fechaOperativa = fechaOperativa;
   }
 
   void stop() {
     _pollTimer?.cancel();
     _pollTimer = null;
     _running = false;
+    _tickInProgress = false;
     _vendedorId = null;
-    fieldLog('GPS-Track', 'detenido');
+    _fechaOperativa = null;
+    _lastKnown = null;
   }
 
   Future<void> _tick() async {
+    if (_tickInProgress) return;
     final vid = _vendedorId;
     if (vid == null || !_running) return;
 
@@ -58,20 +73,15 @@ class GpsTrackingService {
       return;
     }
 
+    _tickInProgress = true;
     try {
-      final available = await locationService.isGpsAvailable();
-      if (!available) {
-        fieldLog('GPS-Track', 'GPS no disponible');
-        return;
-      }
-
-      final snap = await locationService.getCurrentPosition();
+      final snap = await locationService.getTrackingPosition();
       _lastKnown = snap;
 
       var shouldStore = _lastCaptureAt == null ||
           elapsed >= TelemetryConfig.gpsPollMaxInterval;
 
-      if (!shouldStore && _lastKnown != null) {
+      if (!shouldStore) {
         final prev = await _db.lastGpsPoint(vid);
         if (prev != null) {
           final moved = locationService.distanceMeters(
@@ -82,7 +92,6 @@ class GpsTrackingService {
           );
           if (moved >= TelemetryConfig.gpsMovementThresholdMeters) {
             shouldStore = true;
-            fieldLog('GPS-Track', 'movimiento ${moved.toStringAsFixed(0)}m');
           }
         } else {
           shouldStore = true;
@@ -96,32 +105,34 @@ class GpsTrackingService {
           longitude: snap.longitude,
           capturedAt: snap.capturedAt,
           accuracyMeters: snap.accuracyMeters,
+          fechaOperativa: _fechaOperativa,
         );
         _lastCaptureAt = now;
         await _db.setMeta(
-          'last_gps_lat',
-          snap.latitude.toString(),
+          vendedorId: vid,
+          key: 'last_gps_lat',
+          value: snap.latitude.toString(),
         );
         await _db.setMeta(
-          'last_gps_lon',
-          snap.longitude.toString(),
+          vendedorId: vid,
+          key: 'last_gps_lon',
+          value: snap.longitude.toString(),
         );
         await _db.setMeta(
-          'last_gps_at',
-          snap.capturedAt.toUtc().toIso8601String(),
+          vendedorId: vid,
+          key: 'last_gps_at',
+          value: snap.capturedAt.toUtc().toIso8601String(),
         );
-        fieldLog(
-          'GPS-Track',
-          'punto guardado (${snap.latitude.toStringAsFixed(5)}, '
-          '${snap.longitude.toStringAsFixed(5)})',
-        );
+        fieldLog('GPS-Track', 'punto v=$vid', throttle: true);
       }
     } catch (e) {
-      fieldLog('GPS-Track', 'error tick: $e');
+      fieldLogImportant('GPS-Track', 'error v=$vid: $e');
+    } finally {
+      _tickInProgress = false;
     }
   }
 
-  Future<Map<String, dynamic>?> gpsPayloadForHeartbeat() async {
+  Future<Map<String, dynamic>?> gpsPayloadForHeartbeat(String vendedorId) async {
     final snap = _lastKnown;
     if (snap != null) {
       return {
@@ -131,9 +142,9 @@ class GpsTrackingService {
         'captured_at': snap.capturedAt.toUtc().toIso8601String(),
       };
     }
-    final lat = await _db.getMeta('last_gps_lat');
-    final lon = await _db.getMeta('last_gps_lon');
-    final at = await _db.getMeta('last_gps_at');
+    final lat = await _db.getMeta(vendedorId: vendedorId, key: 'last_gps_lat');
+    final lon = await _db.getMeta(vendedorId: vendedorId, key: 'last_gps_lon');
+    final at = await _db.getMeta(vendedorId: vendedorId, key: 'last_gps_at');
     if (lat == null || lon == null) return null;
     return {
       'lat': double.tryParse(lat),

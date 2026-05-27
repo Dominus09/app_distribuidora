@@ -51,6 +51,15 @@ class ClienteSyncDot extends StatelessWidget {
             color: AppColors.primaryRed,
           ),
         );
+      case SyncStatus.deadLetter:
+        return Tooltip(
+          message: 'No se pudo enviar tras varios intentos',
+          child: const Icon(
+            Icons.report_problem_outlined,
+            size: 18,
+            color: AppColors.primaryRed,
+          ),
+        );
     }
   }
 }

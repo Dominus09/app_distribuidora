@@ -4,6 +4,9 @@ import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
+import '../../../core/session/operational_scope.dart';
+import '../../../core/sync/operational_sync_log.dart';
+import '../../../core/sync/processed_action_record.dart';
 import '../../../core/telemetry/outbox_database.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
@@ -150,24 +153,82 @@ SyncVisitaErrorDetail _syncFailureDetail(Visita v, Object e) {
   );
 }
 
-/// Sincronización con API + idempotencia local por `localActionId`.
+/// Sincronización con API + idempotencia local por `localActionId` (por vendedor).
 class SyncService {
-  final Set<String> _processedActionIds = <String>{};
+  SyncService({String? vendedorId}) : _vendedorId = vendedorId?.trim();
+
+  String? _vendedorId;
+  OperationalScope? _scope;
+  final Set<String> _processedActionKeys = <String>{};
   bool _outboundBusy = false;
   bool _idsHydrated = false;
   final OutboxDatabase _outboxDb = OutboxDatabase.instance;
 
+  String get _vid {
+    final id = _vendedorId?.trim();
+    if (id == null || id.isEmpty) {
+      throw StateError('SyncService: vendedor no vinculado');
+    }
+    return id;
+  }
+
+  /// Vincula el servicio al vendedor activo; reinicia caché en memoria si cambia.
+  void bindVendedor(String vendedorId) {
+    final id = vendedorId.trim();
+    if (_vendedorId == id) return;
+    _vendedorId = id;
+    _processedActionKeys.clear();
+    _scope = null;
+    _idsHydrated = false;
+    _outboundBusy = false;
+    fieldLog('Sync', 'vinculado a vendedor=$id');
+  }
+
+  void bindOperationalScope(OperationalScope? scope) {
+    if (_scope == scope) return;
+    _scope = scope;
+    _processedActionKeys.clear();
+    _idsHydrated = false;
+  }
+
+  ProcessedActionRecord _recordFor(String actionId) {
+    final scope = _scope;
+    if (scope != null) {
+      return ProcessedActionRecord.fromScope(scope, actionId);
+    }
+    return ProcessedActionRecord.fromVisitaContext(
+      vendedorId: _vid,
+      fechaOperativa: '',
+      rutaId: 0,
+      actionId: actionId,
+    );
+  }
+
   Future<void> _ensureProcessedIdsLoaded() async {
     if (_idsHydrated) return;
-    final stored = await _outboxDb.loadProcessedActionIds();
-    _processedActionIds.addAll(stored);
+    final stored = await _outboxDb.loadProcessedActionKeys(
+      vendedorId: _vid,
+      fechaOperativa: _scope?.fechaOperativa,
+      rutaId: _scope?.rutaId,
+    );
+    _processedActionKeys.addAll(stored);
     _idsHydrated = true;
-    fieldLog('Sync', 'IDs confirmados cargados: ${stored.length}');
+    fieldLog('Sync', 'ACK keys v=$_vid cargados: ${stored.length}');
   }
 
   Future<void> acknowledgeActionProcessed(String actionId) async {
-    _processedActionIds.add(actionId);
-    await _outboxDb.rememberProcessedAction(actionId);
+    final record = _recordFor(actionId);
+    _processedActionKeys.add(record.memoryKey);
+    await _outboxDb.rememberProcessedAction(record);
+    opSyncLog(
+      event: 'ack_stored',
+      scope: _scope,
+      actionId: actionId,
+    );
+  }
+
+  bool _isActionAcknowledged(String actionId) {
+    return _processedActionKeys.contains(_recordFor(actionId).memoryKey);
   }
 
   List<Visita> normalizeStuckSyncing(List<Visita> source) {
@@ -232,7 +293,7 @@ class SyncService {
     if (lid == null || lid.isEmpty || !v.puedeEnviarseAlBackend) {
       return TrySyncVisitaResult(visitas: list);
     }
-    if (_processedActionIds.contains(lid)) {
+    if (_isActionAcknowledged(lid)) {
       list[idx] = v.copyWith(
         syncStatus: SyncStatus.synced,
         syncConfirmedAt: v.syncConfirmedAt ?? DateTime.now().toUtc(),
@@ -356,7 +417,7 @@ class SyncService {
         final lid = v.localActionId;
         if (lid == null || lid.isEmpty) continue;
 
-        if (_processedActionIds.contains(lid)) {
+        if (_isActionAcknowledged(lid)) {
           list[idx] = v.copyWith(
             syncStatus: SyncStatus.synced,
             syncConfirmedAt: v.syncConfirmedAt ?? DateTime.now().toUtc(),
@@ -433,7 +494,7 @@ class SyncService {
     final id = v.localActionId;
     if (_needsForceQueue(v.syncStatus) &&
         id != null &&
-        _processedActionIds.contains(id)) {
+        _isActionAcknowledged(id)) {
       return v.copyWith(syncStatus: SyncStatus.synced);
     }
     return v;

@@ -165,6 +165,40 @@ class OperationalStatusCard extends StatelessWidget {
                 ],
               ),
             ),
+            if (snap.deadLetterCount > 0) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryRed.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: AppColors.primaryRed.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.report_problem_outlined,
+                      size: 18,
+                      color: AppColors.primaryRed,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${snap.deadLetterCount} registro(s) no se pudieron enviar '
+                        'tras varios intentos. Revisa sincronización forzada.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.primaryRed,
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (!snap.telemetriaActiva) ...[
               const SizedBox(height: 8),
               Text(

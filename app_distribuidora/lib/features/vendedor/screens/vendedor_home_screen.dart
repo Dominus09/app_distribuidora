@@ -6,6 +6,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../auth/auth_navigation.dart';
 import '../../auth/services/auth_service.dart';
+import '../../../core/session/operational_scope.dart';
+import '../../../core/session/session_manager.dart';
+import '../../../core/sync/crash_recovery_service.dart';
 import '../../../core/telemetry/operational_status_snapshot.dart';
 import '../../../core/telemetry/operational_telemetry_service.dart';
 import '../../../core/theme/app_colors.dart';
@@ -15,7 +18,8 @@ import '../services/api_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
-import '../widgets/operational_status_card.dart';
+import '../../../core/telemetry/telemetry_config.dart';
+import '../widgets/operational_status_listener.dart';
 import '../widgets/terreno_sync_banner.dart';
 import 'ruta_screen.dart';
 
@@ -67,7 +71,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   DateTime? _apiOkBypassUntil;
   Timer? _resumeDebounce;
   Timer? _operacionalRefreshTimer;
-  OperationalStatusSnapshot? _operacionalSnapshot;
+  Timer? _operacionalDebounce;
+  final ValueNotifier<OperationalStatusSnapshot?> _operacionalNotifier =
+      ValueNotifier<OperationalStatusSnapshot?>(null);
 
   /// Incluye bypass si el servidor responde aunque `connectivity_plus` falle (PDA / ethernet).
   bool get _attemptRemoteSave =>
@@ -98,7 +104,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     }
     _apiReachProbeTimer?.cancel();
     _apiReachProbeTimer =
-        Timer.periodic(const Duration(seconds: 14), (_) {
+        Timer.periodic(const Duration(seconds: 30), (_) {
       unawaited(_runApiReachProbe());
     });
     unawaited(_runApiReachProbe());
@@ -125,11 +131,15 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
 
   bool _syncBusy = false;
   List<Visita> _visitas = [];
+  OperationalScope? _operationalScope;
+  int? _rutaIdActiva;
 
   /// Tras confirmar el cierre: cumplimiento y conteos (persistencia mock en estado).
   double? _porcentajeCumplimiento;
   int? _clientesVisitadosCierre;
   int? _clientesPendientesCierre;
+  int _deadLetterCount = 0;
+  final _crashRecovery = CrashRecoveryService();
 
   @override
   void initState() {
@@ -137,28 +147,27 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _vendedorService = widget.vendedorService ?? VendedorService();
     _syncService = widget.syncService ?? SyncService();
+    _syncService.bindVendedor(widget.vendedorCodigo);
     _locationService = widget.locationService ?? LocationService();
     _apiService = widget.apiService ?? ApiService();
     _authService = widget.authService ?? DistribuidoraAuthService();
     _telemetry = OperationalTelemetryService(
+      vendedorId: widget.vendedorCodigo,
       api: _apiService,
       locationService: _locationService,
     );
     _telemetry.bindVisitasContext(
-      pendingVisitasCount: () => _visitas
-          .where(
-            (v) =>
-                v.syncStatus == SyncStatus.pendingSync ||
-                v.syncStatus == SyncStatus.syncError,
-          )
-          .length,
+      pendingVisitasCount: () => _visitasPendientesSync,
       onPeriodicVisitaSync: _syncPendientesSilencioso,
     );
-    unawaited(_prefetchVisitasDesdeDisco());
-    _rutaFuture = _cargarRutaDesdeApi();
-    _rutaFuture.then((list) {
-      if (mounted) setState(() => _visitas = list);
-    });
+    _rutaFuture = Future<List<Visita>>.value([]);
+    unawaited(_inicializarSesionVendedor().then((_) {
+      if (!mounted) return;
+      _rutaFuture = _cargarRutaDesdeApi();
+      _rutaFuture.then((list) {
+        if (mounted) setState(() => _visitas = list);
+      });
+    }));
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final previousOk = _connectivityOk;
       final ok = _hayRedDatos(results);
@@ -171,7 +180,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
           _apiReachProbeTimer = null;
         }
       });
-      unawaited(_refrescarEstadoOperacional());
+      _scheduleRefrescarEstadoOperacional();
       if (!ok) {
         _kickApiReachProbes();
       }
@@ -201,10 +210,122 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         _kickApiReachProbes();
       }
     });
-    unawaited(_refrescarEstadoOperacional());
+    _scheduleRefrescarEstadoOperacional();
     _operacionalRefreshTimer = Timer.periodic(
-      const Duration(seconds: 15),
-      (_) => unawaited(_refrescarEstadoOperacional()),
+      TelemetryConfig.operacionalUiRefreshInterval,
+      (_) => _scheduleRefrescarEstadoOperacional(),
+    );
+  }
+
+  Future<void> _inicializarSesionVendedor() async {
+    final activation = await SessionManager.instance.activateForLogin(
+      widget.vendedorCodigo,
+      preserveSessionIfSameVendor: true,
+    );
+    if (activation.vendorChanged) {
+      _limpiarEstadoRuntime();
+      fieldLog(
+        'Session',
+        'cambio vendedor → runtime limpio (${widget.vendedorCodigo})',
+      );
+    }
+    _operationalScope = OperationalScope(
+      vendedorId: widget.vendedorCodigo,
+      fechaOperativa: _fechaOperativaHoy,
+      rutaId: _rutaIdActiva,
+    );
+    _telemetry.bindOperationalScope(_operationalScope);
+    _syncService.bindOperationalScope(_operationalScope);
+    if (!mounted) return;
+    await _prefetchVisitasDesdeDisco();
+    await _ejecutarRecuperacionTrasCrash();
+  }
+
+  Future<void> _ejecutarRecuperacionTrasCrash() async {
+    final scope = _operationalScope ?? _scopeActual;
+    final report = await _crashRecovery.recover(
+      scope: scope,
+      syncService: _syncService,
+      vendedorService: _vendedorService,
+      queue: _telemetry.queueForRecovery,
+      runtimeVisitas: _visitas,
+    );
+    if (!mounted) return;
+    setState(() {
+      _visitas = report.visitas;
+      _deadLetterCount = report.deadLetterCount;
+      _rutaFuture = Future<List<Visita>>.value(report.visitas);
+    });
+    if (report.hasDeadLetters && mounted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Hay ${report.deadLetterCount} registro(s) que no se pudieron enviar. '
+            'Usa sincronización forzada o contacta soporte.',
+          ),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  String get _fechaOperativaHoy => OperationalScope.fechaFromDateTime(DateTime.now());
+
+  OperationalScope get _scopeActual => OperationalScope(
+        vendedorId: widget.vendedorCodigo,
+        fechaOperativa: _fechaOperativaHoy,
+        rutaId: _rutaIdActiva,
+      );
+
+  Future<void> _actualizarScopeOperacional({int? rutaId}) async {
+    if (rutaId != null && rutaId >= 1) {
+      _rutaIdActiva = rutaId;
+    }
+    _operationalScope = _scopeActual;
+    await SessionManager.instance.setOperationalScope(_operationalScope!);
+    _telemetry.bindOperationalScope(_operationalScope);
+    _syncService.bindOperationalScope(_operationalScope);
+  }
+
+  /// Si cambió el día calendario, descarta estado en memoria y recarga scope nuevo.
+  Future<bool> _detectarCambioDiaOperativo() async {
+    final hoy = _fechaOperativaHoy;
+    final prev = _operationalScope?.fechaOperativa;
+    if (prev == null || prev == hoy) return false;
+    fieldLog('Scope', 'cambio día operativo $prev → $hoy');
+    setState(() {
+      _limpiarEstadoRuntime();
+      _rutaIdActiva = null;
+      _operationalScope = OperationalScope(
+        vendedorId: widget.vendedorCodigo,
+        fechaOperativa: hoy,
+      );
+    });
+    _telemetry.bindOperationalScope(_operationalScope);
+    await SessionManager.instance.setOperationalScope(_operationalScope!);
+    _programarRecargaRuta();
+    return true;
+  }
+
+  void _limpiarEstadoRuntime() {
+    _visitas = [];
+    _operationalScope = null;
+    _rutaIdActiva = null;
+    _routeStarted = false;
+    _routeFinished = false;
+    _porcentajeCumplimiento = null;
+    _clientesVisitadosCierre = null;
+    _clientesPendientesCierre = null;
+    _operacionalNotifier.value = null;
+    _syncBusy = false;
+  }
+
+  void _scheduleRefrescarEstadoOperacional() {
+    _operacionalDebounce?.cancel();
+    _operacionalDebounce = Timer(
+      TelemetryConfig.operacionalDebounce,
+      () => unawaited(_refrescarEstadoOperacional()),
     );
   }
 
@@ -225,13 +346,18 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       visitasPendientes: _visitasPendientesSync,
     );
     if (!mounted) return;
-    setState(() => _operacionalSnapshot = snap);
+    _operacionalNotifier.value = snap;
+    if (mounted && snap.deadLetterCount != _deadLetterCount) {
+      setState(() => _deadLetterCount = snap.deadLetterCount);
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _telemetry.stop();
+    _operacionalNotifier.dispose();
+    _operacionalDebounce?.cancel();
     _resumeDebounce?.cancel();
     _operacionalRefreshTimer?.cancel();
     _apiReachProbeTimer?.cancel();
@@ -254,9 +380,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   Future<void> _persistirEstadoAlPausar() async {
+    final scope = _operationalScope ?? _scopeActual;
     if (_visitas.isNotEmpty) {
-      await _vendedorService.persistVisitasToDisk(_visitas);
-      fieldLog('Lifecycle', 'visitas persistidas al pausar (${_visitas.length})');
+      await _vendedorService.persistVisitasToDisk(scope, _visitas);
+      fieldLog(
+        'Lifecycle',
+        'visitas persistidas al pausar scope=$scope n=${_visitas.length}',
+      );
     }
     for (final v in _visitas) {
       if (v.syncStatus == SyncStatus.pendingSync ||
@@ -268,12 +398,14 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   Future<void> _prefetchVisitasDesdeDisco() async {
-    final cached = await _vendedorService.loadVisitasFromDisk();
+    final scope = _operationalScope ?? _scopeActual;
+    final cached = await _vendedorService.loadVisitasFromDisk(scope);
     if (!mounted || cached == null || cached.isEmpty) return;
     setState(() => _visitas = List<Visita>.from(cached));
   }
 
   Future<void> _onAppResumed() async {
+    if (await _detectarCambioDiaOperativo()) return;
     await _restaurarVisitasDesdeDisco();
     if (!mounted || _syncBusy || _forceOffline) return;
     final hayPendientes = _visitas.any(
@@ -293,8 +425,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         _visitas = r.visitas;
         _rutaFuture = Future<List<Visita>>.value(r.visitas);
       });
-      unawaited(_vendedorService.persistVisitasToDisk(r.visitas));
-      unawaited(_refrescarEstadoOperacional());
+      unawaited(
+        _vendedorService.persistVisitasToDisk(
+          _operationalScope ?? _scopeActual,
+          r.visitas,
+        ),
+      );
+      _scheduleRefrescarEstadoOperacional();
       if (r.syncedCount > 0 && mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -311,7 +448,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   Future<void> _restaurarVisitasDesdeDisco() async {
-    final disk = await _vendedorService.loadVisitasFromDisk() ?? <Visita>[];
+    final scope = _operationalScope ?? _scopeActual;
+    final disk =
+        await _vendedorService.loadVisitasFromDisk(scope) ?? <Visita>[];
     if (!mounted || disk.isEmpty) return;
     setState(() {
       _visitas = VendedorService.fusionarDiscoYMemoria(
@@ -320,25 +459,63 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       );
       _rutaFuture = Future<List<Visita>>.value(_visitas);
     });
-    unawaited(_vendedorService.persistVisitasToDisk(_visitas));
+    unawaited(
+      _vendedorService.persistVisitasToDisk(scope, _visitas),
+    );
   }
 
-  /// Carga remota con respaldo en disco si falla la API.
+  /// Carga remota con respaldo en disco si falla la API (alcance operacional del día).
   Future<List<Visita>> _cargarRutaDesdeApi() async {
-    final fecha = _fechaApi(DateTime.now());
-    final cached = await _vendedorService.loadVisitasFromDisk() ?? <Visita>[];
+    final fecha = _fechaOperativaHoy;
+    var scope = OperationalScope(
+      vendedorId: widget.vendedorCodigo,
+      fechaOperativa: fecha,
+      rutaId: _rutaIdActiva,
+    );
+
     try {
       final serverList =
           await _apiService.getRutaDelDia(fecha, widget.vendedorCodigo);
+      final rutaId = OperationalScope.resolveRutaIdFromVisitas(
+        serverList,
+        hint: _rutaIdActiva,
+      );
+      if (rutaId != null) {
+        await _actualizarScopeOperacional(rutaId: rutaId);
+        scope = _scopeActual;
+      } else {
+        _operationalScope = scope;
+        await SessionManager.instance.setOperationalScope(scope);
+      }
+
+      final cached =
+          await _vendedorService.loadVisitasFromDisk(scope) ?? <Visita>[];
+      final locales = _visitas.isEmpty
+          ? cached
+          : VendedorService.fusionarDiscoYMemoria(
+              disco: cached,
+              memoria: _visitas,
+            );
       final merged = VendedorService.mergeServidorConLocales(
         servidor: serverList,
-        locales: cached,
+        locales: locales,
       );
-      await _vendedorService.persistVisitasToDisk(merged);
+      await _vendedorService.persistVisitasToDisk(scope, merged);
+      fieldLog('Ruta', 'GET ok scope=$scope n=${merged.length}');
       return merged;
     } catch (e) {
       fieldLog('Ruta', 'GET ruta falló: $e');
-      if (cached.isNotEmpty) return cached;
+      final cached = await _vendedorService.loadVisitasFromDisk(scope);
+      if (cached != null && cached.isNotEmpty) {
+        if (_visitas.isNotEmpty) {
+          return VendedorService.fusionarDiscoYMemoria(
+            disco: cached,
+            memoria: _visitas,
+          );
+        }
+        return cached;
+      }
+      if (_visitas.isNotEmpty) return List<Visita>.from(_visitas);
       rethrow;
     }
   }
@@ -353,51 +530,41 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   Future<void> _cerrarSesion() async {
+    _telemetry.stop();
+    _limpiarEstadoRuntime();
     await _authService.logout();
     if (!mounted) return;
     if (!context.mounted) return;
     replaceWithDistribuidoraLogin(context);
   }
 
-  static String _fechaApi(DateTime d) {
-    final y = d.year.toString().padLeft(4, '0');
-    final m = d.month.toString().padLeft(2, '0');
-    final day = d.day.toString().padLeft(2, '0');
-    return '$y-$m-$day';
-  }
-
-  /// Paradas cuyo [Visita.diaOperativo] coincide con el día calendario actual (hoy en el dispositivo).
-  /// La lista completa sigue en [_visitas] (caché, sync, pendientes de otros días).
-  List<Visita> get _visitasVistaOperativa {
-    final ref = DateTime.now();
-    return _visitas
-        .where((v) => v.coincideDiaOperativoConCalendario(ref))
-        .toList();
-  }
-
-  int get _totalClientes => _visitasVistaOperativa.length;
+  int get _totalClientes => _visitas.length;
 
   int get _pendientes =>
-      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.pendiente).length;
+      _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
 
   int get _visitados =>
-      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.visitado).length;
+      _visitas.where((v) => v.estado == VisitaEstado.visitado).length;
 
   int get _incidencias =>
-      _visitasVistaOperativa.where((v) => v.estado == VisitaEstado.incidencia).length;
+      _visitas.where((v) => v.estado == VisitaEstado.incidencia).length;
 
   /// Paradas ya registradas (visitado o incidencia); coherente con barra y cierre de ruta.
   int get _clientesAtendidos =>
       _totalClientes -
-      _visitasVistaOperativa
-          .where((v) => v.estado == VisitaEstado.pendiente)
-          .length;
+      _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
 
-  /// Fusiona actualizaciones desde la ruta (subconjunto del día) en la lista completa por `id`.
+  /// Fusiona actualizaciones por `id` y agrega paradas nuevas del servidor.
   static List<Visita> _mergeVisitasPorId(List<Visita> base, List<Visita> updates) {
     if (updates.isEmpty) return List<Visita>.from(base);
     final fresh = <String, Visita>{for (final u in updates) u.id: u};
-    return [for (final b in base) fresh[b.id] ?? b];
+    final baseIds = base.map((e) => e.id).toSet();
+    final merged = [for (final b in base) fresh[b.id] ?? b];
+    for (final u in updates) {
+      if (!baseIds.contains(u.id)) merged.add(u);
+    }
+    merged.sort((a, b) => a.orden.compareTo(b.orden));
+    return merged;
   }
 
   void _setVisitas(List<Visita> next) {
@@ -406,13 +573,18 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       _visitas = merged;
       _rutaFuture = Future<List<Visita>>.value(merged);
     });
-    unawaited(_vendedorService.persistVisitasToDisk(merged));
+    unawaited(
+      _vendedorService.persistVisitasToDisk(
+        _operationalScope ?? _scopeActual,
+        merged,
+      ),
+    );
     for (final v in merged) {
       if (v.syncStatus == SyncStatus.pendingSync) {
         unawaited(_telemetry.backupPendingVisita(v));
       }
     }
-    unawaited(_refrescarEstadoOperacional());
+    _scheduleRefrescarEstadoOperacional();
   }
 
   void _iniciarRuta() {
@@ -423,8 +595,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       _clientesVisitadosCierre = null;
       _clientesPendientesCierre = null;
     });
-    _telemetry.startEnRuta(widget.vendedorCodigo);
-    unawaited(_refrescarEstadoOperacional());
+    _telemetry.startEnRuta();
+    _scheduleRefrescarEstadoOperacional();
   }
 
   /// Progreso operativo: visitados = con resultado (visitado o incidencia); pendientes = aún pendiente.
@@ -497,7 +669,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       _clientesPendientesCierre = p.clientesPendientes;
     });
     _telemetry.stop();
-    unawaited(_refrescarEstadoOperacional());
+    _scheduleRefrescarEstadoOperacional();
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -528,7 +700,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => RutaScreen(
-          visitas: List<Visita>.from(_visitasVistaOperativa),
+          visitas: List<Visita>.from(_visitas),
           attemptRemoteSave: _attemptRemoteSave,
           interfaceConnectivityDetected: _connectivityOk,
           locationService: _locationService,
@@ -596,17 +768,20 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         _visitas = r.visitas;
         _rutaFuture = Future<List<Visita>>.value(r.visitas);
       });
-      await _vendedorService.persistVisitasToDisk(r.visitas);
+      await _vendedorService.persistVisitasToDisk(
+        _operationalScope ?? _scopeActual,
+        r.visitas,
+      );
       fieldLog(
         'Sync',
         'periódico: ${r.syncedCount} ok, ${r.errorCount} error, '
         '${r.pendingAfterCount} pendiente(s)',
       );
-      unawaited(_refrescarEstadoOperacional());
+      _scheduleRefrescarEstadoOperacional();
     } finally {
       if (mounted) {
         setState(() => _syncBusy = false);
-        unawaited(_refrescarEstadoOperacional());
+        _scheduleRefrescarEstadoOperacional();
       }
     }
   }
@@ -650,8 +825,13 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         _visitas = r.visitas;
         _rutaFuture = Future<List<Visita>>.value(r.visitas);
       });
-      unawaited(_vendedorService.persistVisitasToDisk(r.visitas));
-      unawaited(_refrescarEstadoOperacional());
+      unawaited(
+        _vendedorService.persistVisitasToDisk(
+          _operationalScope ?? _scopeActual,
+          r.visitas,
+        ),
+      );
+      _scheduleRefrescarEstadoOperacional();
 
       final String mensaje;
       if (r.duplicateRun) {
@@ -817,9 +997,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   ),
                 ),
                 const SizedBox(height: 10),
-                OperationalStatusCard(
-                  snapshot: _operacionalSnapshot,
-                  isLoading: _operacionalSnapshot == null,
+                OperationalStatusListener(
+                  snapshotListenable: _operacionalNotifier,
                 ),
                 const SizedBox(height: 28),
                 Text(

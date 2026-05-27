@@ -71,7 +71,6 @@ class _RutaScreenState extends State<RutaScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.visitas != widget.visitas) {
       _visitas = List<Visita>.from(widget.visitas);
-      unawaited(_actualizarUbicacionUsuario());
     }
   }
 

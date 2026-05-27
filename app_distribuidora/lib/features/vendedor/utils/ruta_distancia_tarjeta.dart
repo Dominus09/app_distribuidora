@@ -8,10 +8,16 @@ import 'maps_navigation.dart';
 Future<({double lat, double lon})?> obtenerPosicionUsuarioParaDistancias(
   LocationService locationService,
 ) async {
-  final gpsOk = await locationService.isGpsAvailable();
-  if (!gpsOk) return null;
   try {
-    final snap = await locationService.getCurrentPosition();
+    final cached = await locationService.tryGetLastKnownPosition(
+      maxAgeSeconds: 180,
+    );
+    if (cached != null) {
+      return (lat: cached.latitude, lon: cached.longitude);
+    }
+    final gpsOk = await locationService.isGpsAvailable();
+    if (!gpsOk) return null;
+    final snap = await locationService.getTrackingPosition();
     return (lat: snap.latitude, lon: snap.longitude);
   } on Object {
     return null;

@@ -18,7 +18,13 @@ enum ValidacionEstado {
 /// Sincronización con backend y estados locales de cola.
 /// `syncing` y `syncError` son solo cliente; en API se envían como `pending_sync`.
 /// Tras un fallo de POST, la app vuelve a `pendingSync` (reintento); `syncError` puede venir de datos antiguos.
-enum SyncStatus { synced, pendingSync, syncing, syncError }
+enum SyncStatus {
+  synced,
+  pendingSync,
+  syncing,
+  syncError,
+  deadLetter,
+}
 
 /// Tipos de incidencia reportables.
 enum TipoIncidencia {
@@ -80,6 +86,7 @@ extension SyncStatusUi on SyncStatus {
     SyncStatus.pendingSync => 'Pendiente de envío',
     SyncStatus.syncing => 'Sincronizando… (reenvío)',
     SyncStatus.syncError => 'Error de sincronización',
+    SyncStatus.deadLetter => 'No enviado (cola agotada)',
   };
 
   /// Valor persistido en caché local (`toJson`).
@@ -88,6 +95,7 @@ extension SyncStatusUi on SyncStatus {
     SyncStatus.pendingSync => 'pending_sync',
     SyncStatus.syncing => 'syncing',
     SyncStatus.syncError => 'sync_error',
+    SyncStatus.deadLetter => 'dead_letter',
   };
 
   /// Valor enviado al backend en `VisitaCreate` (solo `synced` / `pending_sync`).
@@ -96,12 +104,17 @@ extension SyncStatusUi on SyncStatus {
     SyncStatus.pendingSync => 'pending_sync',
     SyncStatus.syncing => 'pending_sync',
     SyncStatus.syncError => 'pending_sync',
+    SyncStatus.deadLetter => 'pending_sync',
   };
 
   bool get necesitaPushRemoto =>
       this == SyncStatus.pendingSync ||
       this == SyncStatus.syncError ||
       this == SyncStatus.syncing;
+
+  bool get isFailed => this == SyncStatus.syncError;
+
+  bool get isDeadLetter => this == SyncStatus.deadLetter;
 }
 
 extension TipoIncidenciaUi on TipoIncidencia {
@@ -603,8 +616,11 @@ SyncStatus _parseSyncStatus(String? s) {
   final n = s.trim().toLowerCase().replaceAll(' ', '_').replaceAll('-', '_');
   if (n == 'pending_sync') return SyncStatus.pendingSync;
   if (n == 'syncing') return SyncStatus.syncing;
-  if (n == 'sync_error' || n == 'syncerror' || n == 'error_sync') {
+  if (n == 'sync_error' || n == 'syncerror' || n == 'error_sync' || n == 'failed') {
     return SyncStatus.syncError;
+  }
+  if (n == 'dead_letter' || n == 'deadletter') {
+    return SyncStatus.deadLetter;
   }
   if (n == 'synced') return SyncStatus.synced;
   return SyncStatus.synced;

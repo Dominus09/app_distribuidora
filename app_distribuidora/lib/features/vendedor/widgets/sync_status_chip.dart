@@ -33,6 +33,10 @@ class SyncStatusChip extends StatelessWidget {
         bg = AppColors.secondaryBlue.withValues(alpha: 0.08);
         fg = AppColors.secondaryBlue;
         icon = Icons.cloud_done_outlined;
+      case SyncStatus.deadLetter:
+        bg = AppColors.primaryRed.withValues(alpha: 0.15);
+        fg = AppColors.primaryRed;
+        icon = Icons.report_problem_outlined;
     }
 
     return Container(

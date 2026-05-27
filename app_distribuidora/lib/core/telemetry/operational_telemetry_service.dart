@@ -3,6 +3,9 @@ import 'dart:async';
 import '../../features/vendedor/models/visita.dart';
 import '../../features/vendedor/services/api_service.dart';
 import '../../features/vendedor/services/location_service.dart';
+import '../session/operational_scope.dart';
+import '../session/session_manager.dart';
+import '../sync/telemetry_runtime_registry.dart';
 import '../utils/field_log.dart';
 import 'device_context_service.dart';
 import 'gps_tracking_service.dart';
@@ -11,21 +14,28 @@ import 'outbox_database.dart';
 import 'outbox_queue_service.dart';
 import 'telemetry_config.dart';
 
-/// Coordinador de telemetría: heartbeat 60s, GPS continuo, cola offline, sync periódico.
+/// Telemetría por vendedor con **un solo timer** coordinador (menos carga CPU).
 class OperationalTelemetryService {
   OperationalTelemetryService({
+    required String vendedorId,
     required this.api,
     required this.locationService,
     DeviceContextService? deviceContext,
     OutboxDatabase? database,
-  })  : _device = deviceContext ?? DeviceContextService(),
+  })  : _vendedorId = vendedorId.trim(),
+        _device = deviceContext ?? DeviceContextService(),
         _db = database ?? OutboxDatabase.instance,
         _gps = GpsTrackingService(
           locationService: locationService,
           database: database,
         ),
-        _queue = OutboxQueueService(api: api, database: database);
+        _queue = OutboxQueueService(
+          api: api,
+          vendedorId: vendedorId.trim(),
+          database: database,
+        );
 
+  final String _vendedorId;
   final ApiService api;
   final LocationService locationService;
   final DeviceContextService _device;
@@ -33,20 +43,21 @@ class OperationalTelemetryService {
   final GpsTrackingService _gps;
   final OutboxQueueService _queue;
 
-  Timer? _heartbeatTimer;
-  Timer? _periodicSyncTimer;
-  Timer? _flushTimer;
-  String? _vendedorId;
+  Timer? _coordinatorTimer;
+  DateTime? _lastHeartbeatAt;
+  DateTime? _lastFlushAt;
+  DateTime? _lastVisitaSyncAt;
   bool _active = false;
+  bool _coordinatorBusy = false;
+  OperationalScope? _scope;
 
   int Function()? _pendingVisitasCount;
   Future<void> Function()? _onPeriodicVisitaSync;
 
   bool get isActive => _active;
   bool get isQueueFlushing => _queue.isFlushing;
-  GpsTrackingService get gpsTracker => _gps;
+  OutboxQueueService get queueForRecovery => _queue;
 
-  /// Registra callback para contar visitas pendientes en heartbeat.
   void bindVisitasContext({
     required int Function() pendingVisitasCount,
     required Future<void> Function() onPeriodicVisitaSync,
@@ -55,86 +66,103 @@ class OperationalTelemetryService {
     _onPeriodicVisitaSync = onPeriodicVisitaSync;
   }
 
-  /// Inicia telemetría mientras el vendedor está en ruta.
-  void startEnRuta(String vendedorId) {
-    if (_active && _vendedorId == vendedorId) return;
-    stop();
-    _vendedorId = vendedorId;
+  void bindOperationalScope(OperationalScope? scope) {
+    _scope = scope;
+    _queue.bindOperationalScope(scope);
+    if (_active && scope != null) {
+      _gps.setFechaOperativa(scope.fechaOperativa);
+    }
+  }
+
+  void startEnRuta() {
+    if (_active) return;
+    if (!TelemetryRuntimeRegistry.instance.tryAcquire(_vendedorId, this)) {
+      fieldLogImportant(
+        'Telemetry',
+        'coordinador ya activo para otro owner v=$_vendedorId',
+      );
+      return;
+    }
     _active = true;
-    fieldLog('Telemetry', 'inicio en ruta vendedor=$vendedorId');
+    final now = DateTime.now();
+    _lastHeartbeatAt = now.subtract(TelemetryConfig.heartbeatInterval);
+    _lastFlushAt = now;
+    _lastVisitaSyncAt = now;
 
-    _gps.start(vendedorId);
-
-    _heartbeatTimer = Timer.periodic(
-      TelemetryConfig.heartbeatInterval,
-      (_) => unawaited(_sendHeartbeat()),
-    );
-    unawaited(_sendHeartbeat());
-
-    _periodicSyncTimer = Timer.periodic(
-      TelemetryConfig.periodicVisitaSyncInterval,
-      (_) => unawaited(_runPeriodicVisitaSync()),
+    _gps.start(
+      _vendedorId,
+      fechaOperativa: _scope?.fechaOperativa,
     );
 
-    _flushTimer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => unawaited(_queue.flushPending()),
+    _coordinatorTimer?.cancel();
+    _coordinatorTimer = Timer.periodic(
+      TelemetryConfig.coordinatorTickInterval,
+      (_) => unawaited(_runCoordinatorTick()),
     );
-
-    unawaited(_queue.flushPending());
+    Future<void>.delayed(Duration.zero, _runCoordinatorTick);
+    fieldLog('Telemetry', 'coordinador v=$_vendedorId', force: true);
   }
 
   void stop() {
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-    _periodicSyncTimer?.cancel();
-    _periodicSyncTimer = null;
-    _flushTimer?.cancel();
-    _flushTimer = null;
+    _coordinatorTimer?.cancel();
+    _coordinatorTimer = null;
     _gps.stop();
     _active = false;
-    _vendedorId = null;
-    fieldLog('Telemetry', 'detenido');
+    _coordinatorBusy = false;
+    TelemetryRuntimeRegistry.instance.release(this);
   }
 
   Future<void> onConnectivityRestored() async {
-    fieldLog('Telemetry', 'conectividad restaurada → flush + sync');
-    await _queue.flushPending();
+    await _queue.flushPending(maxItems: TelemetryConfig.maxOutboxFlushPerTick);
     await _runPeriodicVisitaSync();
   }
 
   Future<void> onAppPaused() async {
-    fieldLog('Telemetry', 'app pausada → heartbeat de respaldo');
     if (_active) {
       await _sendHeartbeat(enqueueOnly: true);
     }
-    await _queue.flushPending(onlyWhenReachable: false);
+    await _queue.flushPending(
+      onlyWhenReachable: false,
+      maxItems: TelemetryConfig.maxOutboxFlushPerTick,
+    );
   }
 
   Future<double> kmRecorridosHoy() async {
-    final vid = _vendedorId;
-    if (vid == null) return 0;
-    return _db.kmRecorridosHoy(vid);
+    if (!_active) return 0;
+    return _db.kmRecorridosHoy(_vendedorId);
   }
 
-  /// Estado operacional para la tarjeta del Home (textos no técnicos).
   Future<OperationalStatusSnapshot> loadStatusSnapshot({
     required bool enRuta,
     required bool puedeEnviarAlServidor,
     required bool sincronizando,
     required int visitasPendientes,
   }) async {
-    final cola = await _db.pendingCount();
-    final km = enRuta ? await kmRecorridosHoy() : 0.0;
+    final results = await Future.wait<Object?>([
+      _db.pendingCount(vendedorId: _vendedorId, scope: _scope),
+      _db.deadLetterCount(vendedorId: _vendedorId, scope: _scope),
+      enRuta
+          ? _db.kmRecorridosHoy(
+              _vendedorId,
+              fechaOperativa: _scope?.fechaOperativa,
+            )
+          : Future<double>.value(0),
+      _db.getMeta(vendedorId: _vendedorId, key: 'last_heartbeat_at'),
+      _db.getMeta(vendedorId: _vendedorId, key: 'last_gps_at'),
+    ]);
+
+    final cola = results[0]! as int;
+    final deadLetters = results[1]! as int;
+    final km = results[2]! as double;
 
     DateTime? ultimoHb;
-    final hbRaw = await _db.getMeta('last_heartbeat_at');
+    final hbRaw = results[3] as String?;
     if (hbRaw != null) {
       ultimoHb = DateTime.tryParse(hbRaw)?.toLocal();
     }
 
-    final gpsAtRaw = await _db.getMeta('last_gps_at');
     DateTime? ultimoGps;
+    final gpsAtRaw = results[4] as String?;
     if (gpsAtRaw != null) {
       ultimoGps = DateTime.tryParse(gpsAtRaw)?.toLocal();
     }
@@ -155,10 +183,12 @@ class OperationalTelemetryService {
     }
 
     OperacionalEnlaceEstado enlace;
-    if (sincronizando || _queue.isFlushing || (cola > 0 && puedeEnviarAlServidor)) {
-      enlace = OperacionalEnlaceEstado.reintentando;
-    } else if (!puedeEnviarAlServidor) {
+    if (!puedeEnviarAlServidor) {
       enlace = OperacionalEnlaceEstado.offline;
+    } else if (sincronizando ||
+        _queue.isFlushing ||
+        (cola > 0 && puedeEnviarAlServidor)) {
+      enlace = OperacionalEnlaceEstado.reintentando;
     } else if (enRuta && ultimoHb != null) {
       final age = DateTime.now().difference(ultimoHb);
       enlace = age <= TelemetryConfig.heartbeatInterval * 2
@@ -170,15 +200,12 @@ class OperationalTelemetryService {
       enlace = OperacionalEnlaceEstado.online;
     }
 
-    if (!puedeEnviarAlServidor) {
-      enlace = OperacionalEnlaceEstado.offline;
-    }
-
     return OperationalStatusSnapshot(
       enlace: enlace,
       gps: gpsEstado,
       pendientesCola: cola,
       visitasPendientes: visitasPendientes,
+      deadLetterCount: deadLetters,
       kmHoy: km,
       ultimoHeartbeat: ultimoHb,
       telemetriaActiva: enRuta && _active,
@@ -186,26 +213,59 @@ class OperationalTelemetryService {
     );
   }
 
+  Future<void> _runCoordinatorTick() async {
+    if (!_active || _coordinatorBusy) return;
+    _coordinatorBusy = true;
+    try {
+      final now = DateTime.now();
+
+      if (_lastHeartbeatAt == null ||
+          now.difference(_lastHeartbeatAt!) >=
+              TelemetryConfig.heartbeatInterval) {
+        _lastHeartbeatAt = now;
+        await _sendHeartbeat();
+      }
+
+      if (_lastFlushAt == null ||
+          now.difference(_lastFlushAt!) >= TelemetryConfig.outboxFlushInterval) {
+        _lastFlushAt = now;
+        await _queue.flushPending(
+          maxItems: TelemetryConfig.maxOutboxFlushPerTick,
+        );
+      }
+
+      if (_lastVisitaSyncAt == null ||
+          now.difference(_lastVisitaSyncAt!) >=
+              TelemetryConfig.periodicVisitaSyncInterval) {
+        _lastVisitaSyncAt = now;
+        await _runPeriodicVisitaSync();
+      }
+    } finally {
+      _coordinatorBusy = false;
+    }
+  }
+
   Future<void> _sendHeartbeat({bool enqueueOnly = false}) async {
-    final vid = _vendedorId;
-    if (vid == null || !_active) return;
+    if (!_active) return;
 
     try {
       final device = await _device.snapshot();
-      final gps = await _gps.gpsPayloadForHeartbeat();
+      final gps = await _gps.gpsPayloadForHeartbeat(_vendedorId);
       final pending = _pendingVisitasCount?.call() ?? 0;
       final now = DateTime.now().toUtc();
+      final sessionId = SessionManager.instance.sessionId;
 
       final payload = <String, dynamic>{
-        'vendedor_id': vid,
+        'vendedor_id': _vendedorId,
         'timestamp': now.toIso8601String(),
+        if (sessionId != null) 'session_id': sessionId,
         if (gps != null) 'gps': gps,
         'bateria': device['bateria'],
         'conexion': device['conexion'],
         'visitas_pendientes': pending,
         'app_version': device['app_version'],
         'dispositivo': device['dispositivo'],
-        'idempotency_key': _queue.newHeartbeatIdempotencyKey(vid),
+        'idempotency_key': _queue.newHeartbeatIdempotencyKey(),
       };
 
       if (enqueueOnly) {
@@ -219,31 +279,34 @@ class OperationalTelemetryService {
             .timeout(TelemetryConfig.telemetryHttpTimeout);
         if (ack.confirmed) {
           await _db.setMeta(
-            'last_heartbeat_at',
-            now.toIso8601String(),
+            vendedorId: _vendedorId,
+            key: 'last_heartbeat_at',
+            value: now.toIso8601String(),
           );
-          fieldLog('Heartbeat', 'enviado OK vendedor=$vid pending=$pending');
+          fieldLog('Heartbeat', 'OK v=$_vendedorId', throttle: true);
         } else {
           await _queue.enqueueHeartbeat(payload);
-          fieldLog('Heartbeat', 'sin ACK → cola offline');
         }
       } catch (e) {
         await _queue.enqueueHeartbeat(payload);
-        fieldLog('Heartbeat', 'falló → cola: $e');
+        fieldLogImportant('Heartbeat', 'falló v=$_vendedorId: $e');
       }
 
-      await _uploadPendingGpsPoints(vid);
+      await _uploadPendingGpsPoints();
     } catch (e) {
-      fieldLog('Heartbeat', 'error construyendo payload: $e');
+      fieldLogImportant('Heartbeat', 'error v=$_vendedorId: $e');
     }
   }
 
-  Future<void> _uploadPendingGpsPoints(String vendedorId) async {
-    final points = await _db.unuploadedGpsPoints(vendedorId: vendedorId);
+  Future<void> _uploadPendingGpsPoints() async {
+    final points =
+        await _db.unuploadedGpsPoints(vendedorId: _vendedorId, limit: 40);
     if (points.isEmpty) return;
 
+    final sessionId = SessionManager.instance.sessionId;
     final payload = {
-      'vendedor_id': vendedorId,
+      'vendedor_id': _vendedorId,
+      if (sessionId != null) 'session_id': sessionId,
       'timestamp': DateTime.now().toUtc().toIso8601String(),
       'point_ids': points.map((p) => p.id).toList(),
       'puntos': points
@@ -256,9 +319,7 @@ class OperationalTelemetryService {
             },
           )
           .toList(),
-      'idempotency_key': _queue.newHeartbeatIdempotencyKey(
-        '${vendedorId}_gps',
-      ),
+      'idempotency_key': _queue.newHeartbeatIdempotencyKey(),
     };
 
     try {
@@ -266,14 +327,15 @@ class OperationalTelemetryService {
           .postGpsTrack(payload)
           .timeout(TelemetryConfig.telemetryHttpTimeout);
       if (ack.confirmed) {
-        await _db.markGpsPointsUploaded(points.map((p) => p.id).toList());
-        fieldLog('GPS-Track', '${points.length} punto(s) subidos');
+        await _db.markGpsPointsUploaded(
+          points.map((p) => p.id).toList(),
+          vendedorId: _vendedorId,
+        );
       } else {
         await _queue.enqueueGpsTrack(payload);
       }
-    } catch (e) {
+    } catch (_) {
       await _queue.enqueueGpsTrack(payload);
-      fieldLog('GPS-Track', 'upload falló → cola: $e');
     }
   }
 
@@ -282,14 +344,12 @@ class OperationalTelemetryService {
     final cb = _onPeriodicVisitaSync;
     if (cb == null) return;
     try {
-      fieldLog('Telemetry', 'sync periódico visitas');
       await cb();
     } catch (e) {
-      fieldLog('Telemetry', 'sync periódico error: $e');
+      fieldLogImportant('Telemetry', 'sync periódico: $e');
     }
   }
 
-  /// Persiste visita en cola de respaldo si queda pendiente de sync.
   Future<void> backupPendingVisita(Visita visita) async {
     if (visita.syncStatus == SyncStatus.pendingSync ||
         visita.syncStatus == SyncStatus.syncError) {

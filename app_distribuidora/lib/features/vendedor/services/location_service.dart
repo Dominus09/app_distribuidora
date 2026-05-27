@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:geolocator/geolocator.dart';
 
 import '../../../core/config/terreno_config.dart';
+import '../../../core/telemetry/telemetry_config.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 
@@ -125,6 +126,59 @@ class LocationService {
     );
     if (last != null) return last;
     throw TimeoutException('No se obtuvo posición GPS');
+  }
+
+  /// Última posición conocida del SO (rápida, sin encender GPS de alto consumo).
+  Future<LocationSnapshot?> tryGetLastKnownPosition({
+    int maxAgeSeconds = 120,
+  }) async {
+    if (useMockGps) {
+      return getCurrentPosition();
+    }
+    try {
+      final pos = await Geolocator.getLastKnownPosition();
+      if (pos == null) return null;
+      final age = DateTime.now().difference(pos.timestamp).inSeconds.abs();
+      if (age > maxAgeSeconds) return null;
+      return LocationSnapshot(
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        capturedAt: DateTime.now(),
+        gpsAvailable: true,
+        accuracyMeters: pos.accuracy.isFinite ? pos.accuracy : null,
+        positionTimestamp: pos.timestamp,
+        isMock: false,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// GPS de telemetría / mapa lista: precisión media, timeout corto.
+  Future<LocationSnapshot> getTrackingPosition() async {
+    if (useMockGps) {
+      return getCurrentPosition();
+    }
+    final cached = await tryGetLastKnownPosition(maxAgeSeconds: 90);
+    if (cached != null) return cached;
+
+    final now = DateTime.now();
+    final pos = await Geolocator.getCurrentPosition(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.medium,
+        distanceFilter: 0,
+        timeLimit: TelemetryConfig.trackingGpsTimeout,
+      ),
+    );
+    return LocationSnapshot(
+      latitude: pos.latitude,
+      longitude: pos.longitude,
+      capturedAt: now,
+      gpsAvailable: true,
+      accuracyMeters: pos.accuracy.isFinite ? pos.accuracy : null,
+      positionTimestamp: pos.timestamp,
+      isMock: false,
+    );
   }
 
   Future<LocationSnapshot> _leerPosicionReal() async {

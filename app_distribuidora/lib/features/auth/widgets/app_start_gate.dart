@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/session/session_manager.dart';
 import '../../../core/theme/app_colors.dart';
 import '../auth_navigation.dart';
 import '../models/tipo_usuario.dart';
@@ -41,6 +42,12 @@ class _AppStartGateState extends State<AppStartGate> {
       replaceRouteWithDistribuidoraLogin(context);
       return;
     }
+
+    await SessionManager.instance.hydrateFromPrefs();
+    await SessionManager.instance.activateForLogin(
+      codigo,
+      preserveSessionIfSameVendor: true,
+    );
 
     if (!mounted) return;
     final rol = rolDesdeTipoUsuario(tipoRaw);

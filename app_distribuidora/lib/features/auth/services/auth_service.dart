@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/config/api_config.dart';
+import '../../../core/session/session_manager.dart';
 import '../models/login_response.dart';
 
 /// Claves de sesión (no chocan con `vendedor_ruta_visitas_json` del módulo ruta).
@@ -88,6 +89,7 @@ class DistribuidoraAuthService {
         nombre,
         tipoUsuario: tipo,
       );
+      await SessionManager.instance.activateForLogin(vendedor);
       return LoginResponse(
         success: true,
         vendedor: vendedor,
@@ -137,6 +139,7 @@ class DistribuidoraAuthService {
   }
 
   Future<void> logout() async {
+    await SessionManager.instance.clearOnLogout();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(AuthSessionKeys.loggedIn, false);
     await prefs.remove(AuthSessionKeys.vendedorCodigo);

@@ -19,6 +19,7 @@ class OperationalStatusSnapshot {
     required this.gps,
     required this.pendientesCola,
     required this.visitasPendientes,
+    this.deadLetterCount = 0,
     required this.kmHoy,
     this.ultimoHeartbeat,
     required this.telemetriaActiva,
@@ -29,6 +30,7 @@ class OperationalStatusSnapshot {
   final OperacionalGpsEstado gps;
   final int pendientesCola;
   final int visitasPendientes;
+  final int deadLetterCount;
   final double kmHoy;
   final DateTime? ultimoHeartbeat;
   final bool telemetriaActiva;
