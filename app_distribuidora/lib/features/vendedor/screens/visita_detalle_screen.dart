@@ -17,6 +17,7 @@ class VisitaDetalleScreen extends StatefulWidget {
     super.key,
     required this.visita,
     required this.attemptRemoteSave,
+    required this.interfaceConnectivityDetected,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
@@ -25,6 +26,7 @@ class VisitaDetalleScreen extends StatefulWidget {
 
   final Visita visita;
   final bool attemptRemoteSave;
+  final bool interfaceConnectivityDetected;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
@@ -76,6 +78,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
       context: context,
       visita: _visita,
       attemptRemoteSave: widget.attemptRemoteSave,
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
       apiService: widget.apiService,
       locationService: widget.locationService,
       vendedorService: widget.vendedorService,
@@ -89,6 +92,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
       context: context,
       visita: _visita,
       attemptRemoteSave: widget.attemptRemoteSave,
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
       apiService: widget.apiService,
       locationService: widget.locationService,
       vendedorService: widget.vendedorService,

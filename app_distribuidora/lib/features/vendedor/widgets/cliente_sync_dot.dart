@@ -14,7 +14,7 @@ class ClienteSyncDot extends StatelessWidget {
     switch (visita.syncStatus) {
       case SyncStatus.synced:
         return Tooltip(
-          message: 'Sincronizado con el servidor',
+          message: '🟢 Sincronizado con el servidor',
           child: const Icon(
             Icons.cloud_done_outlined,
             size: 17,
@@ -23,7 +23,7 @@ class ClienteSyncDot extends StatelessWidget {
         );
       case SyncStatus.pendingSync:
         return Tooltip(
-          message: 'Pendiente de sincronización',
+          message: '🟡 Pendiente de envío',
           child: const Icon(
             Icons.cloud_upload_outlined,
             size: 17,
@@ -32,7 +32,7 @@ class ClienteSyncDot extends StatelessWidget {
         );
       case SyncStatus.syncing:
         return Tooltip(
-          message: 'Sincronizando…',
+          message: '🔵 Reenviando al servidor',
           child: SizedBox(
             width: 16,
             height: 16,
@@ -44,7 +44,7 @@ class ClienteSyncDot extends StatelessWidget {
         );
       case SyncStatus.syncError:
         return Tooltip(
-          message: 'Error de sincronización',
+          message: '🔴 Error persistente — reintenta sincronizar',
           child: const Icon(
             Icons.error_outline_rounded,
             size: 18,

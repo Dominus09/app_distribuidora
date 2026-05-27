@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/config/terreno_config.dart';
+import '../../../core/ux/offline_ux.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
@@ -14,10 +15,13 @@ import '../utils/incidencia_photo.dart';
 
 Future<LocationSnapshot?> captureGpsSnapshot(
   LocationService locationService,
-  String logTag,
-) async {
+  String logTag, {
+  bool fastOffline = false,
+}) async {
   try {
-    return await locationService.getCurrentPosition();
+    return await locationService.getCurrentPositionForVisit(
+      fastOffline: fastOffline,
+    );
   } on TimeoutException catch (e) {
     fieldLog(logTag, 'Timeout GPS: $e');
     return null;
@@ -32,6 +36,7 @@ Future<Visita?> showVisitadoFlowSheet({
   required BuildContext context,
   required Visita visita,
   required bool attemptRemoteSave,
+  required bool interfaceConnectivityDetected,
   required ApiService apiService,
   required LocationService locationService,
   required VendedorService vendedorService,
@@ -55,6 +60,7 @@ Future<Visita?> showVisitadoFlowSheet({
           child: _VisitadoSheetBody(
             visita: visita,
             attemptRemoteSave: attemptRemoteSave,
+            interfaceConnectivityDetected: interfaceConnectivityDetected,
             apiService: apiService,
             locationService: locationService,
             vendedorService: vendedorService,
@@ -70,6 +76,7 @@ class _VisitadoSheetBody extends StatefulWidget {
   const _VisitadoSheetBody({
     required this.visita,
     required this.attemptRemoteSave,
+    required this.interfaceConnectivityDetected,
     required this.apiService,
     required this.locationService,
     required this.vendedorService,
@@ -78,6 +85,7 @@ class _VisitadoSheetBody extends StatefulWidget {
 
   final Visita visita;
   final bool attemptRemoteSave;
+  final bool interfaceConnectivityDetected;
   final ApiService apiService;
   final LocationService locationService;
   final VendedorService vendedorService;
@@ -100,8 +108,18 @@ class _VisitadoSheetBodyState extends State<_VisitadoSheetBody> {
     super.dispose();
   }
 
-  Future<LocationSnapshot?> _obtenerSnapGps() =>
-      captureGpsSnapshot(widget.locationService, 'Visitado');
+  Future<LocationSnapshot?> _obtenerSnapGps() {
+    final fast = OfflineUx.debeOmitirHttp(
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      forceOffline: false,
+    );
+    return captureGpsSnapshot(
+      widget.locationService,
+      'Visitado',
+      fastOffline: fast,
+    );
+  }
 
   Future<void> _guardar() async {
     if (_conCompra == null) {
@@ -429,6 +447,7 @@ Future<Visita?> showIncidenciaFlowSheet({
   required BuildContext context,
   required Visita visita,
   required bool attemptRemoteSave,
+  required bool interfaceConnectivityDetected,
   required ApiService apiService,
   required LocationService locationService,
   required VendedorService vendedorService,
@@ -450,6 +469,7 @@ Future<Visita?> showIncidenciaFlowSheet({
         child: _IncidenciaSheetBody(
           visita: visita,
           attemptRemoteSave: attemptRemoteSave,
+          interfaceConnectivityDetected: interfaceConnectivityDetected,
           apiService: apiService,
           locationService: locationService,
           vendedorService: vendedorService,
@@ -464,6 +484,7 @@ class _IncidenciaSheetBody extends StatefulWidget {
   const _IncidenciaSheetBody({
     required this.visita,
     required this.attemptRemoteSave,
+    required this.interfaceConnectivityDetected,
     required this.apiService,
     required this.locationService,
     required this.vendedorService,
@@ -472,6 +493,7 @@ class _IncidenciaSheetBody extends StatefulWidget {
 
   final Visita visita;
   final bool attemptRemoteSave;
+  final bool interfaceConnectivityDetected;
   final ApiService apiService;
   final LocationService locationService;
   final VendedorService vendedorService;
@@ -545,7 +567,16 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
       if (!telefonica) {
         gpsOk = await widget.locationService.isGpsAvailable();
         if (gpsOk) {
-          snap = await captureGpsSnapshot(widget.locationService, 'Incidencia');
+          final fast = OfflineUx.debeOmitirHttp(
+            interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
+            attemptRemoteSave: widget.attemptRemoteSave,
+            forceOffline: false,
+          );
+          snap = await captureGpsSnapshot(
+            widget.locationService,
+            'Incidencia',
+            fastOffline: fast,
+          );
         }
       }
 

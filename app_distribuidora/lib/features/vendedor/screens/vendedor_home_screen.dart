@@ -9,6 +9,7 @@ import '../../auth/services/auth_service.dart';
 import '../../../core/session/operational_scope.dart';
 import '../../../core/session/session_manager.dart';
 import '../../../core/sync/crash_recovery_service.dart';
+import '../../../core/sync/write_ahead_visit_sync.dart';
 import '../../../core/telemetry/operational_status_snapshot.dart';
 import '../../../core/telemetry/operational_telemetry_service.dart';
 import '../../../core/theme/app_colors.dart';
@@ -606,6 +607,22 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     return merged;
   }
 
+  Future<List<Visita>> _persistVisitaWriteAhead(
+    Visita updated,
+    List<Visita> current,
+  ) async {
+    final scope = _operationalScope ?? _scopeActual;
+    final wa = WriteAheadVisitSync(
+      vendedorService: _vendedorService,
+      telemetry: _telemetry,
+    );
+    return wa.persistAndEnqueue(
+      scope: scope,
+      visitas: current,
+      updated: updated,
+    );
+  }
+
   void _setVisitas(List<Visita> next) {
     final merged = _mergeVisitasPorId(_visitas, next);
     setState(() {
@@ -743,6 +760,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
           apiService: _apiService,
           onVisitasChanged: _setVisitas,
           reloadRuta: _cargarRutaDesdeApi,
+          persistVisitaWriteAhead: _persistVisitaWriteAhead,
         ),
       ),
     );

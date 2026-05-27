@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../features/vendedor/models/visita.dart';
 import '../../features/vendedor/services/api_service.dart';
 import '../session/operational_scope.dart';
+import '../network/api_timeouts.dart';
 import '../sync/outbox_sync_state.dart';
 import '../sync/processed_action_record.dart';
 import '../utils/field_log.dart';
@@ -66,7 +67,7 @@ class OutboxQueueService {
     try {
       if (onlyWhenReachable) {
         final reach = await api.checkReachability(
-          timeout: const Duration(seconds: 8),
+          timeout: ApiTimeouts.reachability,
         );
         if (!reach.ok) {
           fieldLog(

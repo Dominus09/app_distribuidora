@@ -82,6 +82,24 @@ class LocationService {
     return true;
   }
 
+  /// Fix para marcar visita: en modo rápido usa last-known y timeout corto.
+  Future<LocationSnapshot> getCurrentPositionForVisit({
+    bool fastOffline = false,
+  }) async {
+    if (useMockGps) {
+      return getCurrentPosition();
+    }
+    if (fastOffline) {
+      final cached = await tryGetLastKnownPosition(maxAgeSeconds: 600);
+      if (cached != null) return cached;
+      return _leerPosicionReal(
+        timeLimit: TerrenoConfig.gpsFixTimeoutFast,
+        accuracy: LocationAccuracy.medium,
+      );
+    }
+    return getCurrentPosition();
+  }
+
   /// Fix actual: [LocationAccuracy.best], sin reutilizar lecturas obsoletas si se puede evitar.
   Future<LocationSnapshot> getCurrentPosition() async {
     if (useMockGps) {
@@ -102,7 +120,10 @@ class LocationService {
     for (var intento = 0;
         intento <= TerrenoConfig.gpsFreshRetries;
         intento++) {
-      final snap = await _leerPosicionReal();
+      final snap = await _leerPosicionReal(
+        timeLimit: TerrenoConfig.gpsFixTimeout,
+        accuracy: LocationAccuracy.best,
+      );
       last = snap;
       final ts = snap.positionTimestamp;
       final age = ts != null
@@ -181,13 +202,16 @@ class LocationService {
     );
   }
 
-  Future<LocationSnapshot> _leerPosicionReal() async {
+  Future<LocationSnapshot> _leerPosicionReal({
+    Duration? timeLimit,
+    LocationAccuracy accuracy = LocationAccuracy.best,
+  }) async {
     final now = DateTime.now();
     final pos = await Geolocator.getCurrentPosition(
       locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.best,
+        accuracy: accuracy,
         distanceFilter: 0,
-        timeLimit: TerrenoConfig.gpsFixTimeout,
+        timeLimit: timeLimit ?? TerrenoConfig.gpsFixTimeout,
       ),
     );
     return LocationSnapshot(

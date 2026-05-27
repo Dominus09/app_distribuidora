@@ -11,8 +11,11 @@ abstract final class TerrenoConfig {
   /// Rechazar lecturas cuya marca de tiempo del fix sea más vieja que esto (segundos).
   static const int maxPositionAgeSeconds = 45;
 
-  /// Tiempo máximo de espera a un fix GPS antes de fallar.
+  /// Tiempo máximo de espera a un fix GPS antes de fallar (en línea).
   static const Duration gpsFixTimeout = Duration(seconds: 35);
+
+  /// Sin red: priorizar last-known y timeout corto (no bloquear guardado).
+  static const Duration gpsFixTimeoutFast = Duration(seconds: 10);
 
   /// Reintento único si el primer fix llegó demasiado viejo.
   static const int gpsFreshRetries = 1;

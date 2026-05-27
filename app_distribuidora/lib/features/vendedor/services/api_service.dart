@@ -5,13 +5,15 @@ import 'dart:io' show SocketException;
 import 'package:http/http.dart' as http;
 
 import '../../../core/config/api_config.dart';
+import '../../../core/network/api_timeouts.dart';
 import '../models/visita.dart';
 import 'visitas_api_payload.dart';
 
-const Duration _kGetRutaTimeout = Duration(seconds: 45);
-const Duration _kPostVisitaTimeout = Duration(seconds: 25);
-const Duration _kPostSyncTimeout = Duration(seconds: 45);
-const Duration _kPostTelemetryTimeout = Duration(seconds: 20);
+const Duration _kGetRutaTimeout = ApiTimeouts.getRuta;
+const Duration _kPostVisitaTimeout = ApiTimeouts.postVisita;
+const Duration _kPostSyncTimeout = ApiTimeouts.postVisitaBatch;
+const Duration _kPostTelemetryTimeout = ApiTimeouts.postTelemetry;
+const Duration _kReachabilityTimeout = ApiTimeouts.reachability;
 
 /// Resultado de [ApiService.checkReachability] (OpenAPI `GET …/openapi.json`).
 enum ApiReachabilityKind {
@@ -143,7 +145,7 @@ class ApiService {
   /// Comprueba que el servidor API responde (red + DNS + handshake + HTTP).
   /// Tolera 3xx–4xx como “alcanzable” para descartar sólo caídas/red/5xx obvias.
   Future<ApiReachabilityOutcome> checkReachability({
-    Duration timeout = const Duration(seconds: 8),
+    Duration timeout = _kReachabilityTimeout,
   }) async {
     final uri = _uri('openapi.json');
     try {
@@ -204,7 +206,7 @@ class ApiService {
   /// Comprueba que el servidor API responde (internet real, no solo interfaz activa).
   /// Usa OpenAPI de FastAPI; tolera 3xx–4xx como “alcanzable” (red y DNS OK).
   Future<bool> pingReachable({
-    Duration timeout = const Duration(seconds: 8),
+    Duration timeout = _kReachabilityTimeout,
   }) async {
     final o = await checkReachability(timeout: timeout);
     return o.ok;

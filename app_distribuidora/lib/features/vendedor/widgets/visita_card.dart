@@ -17,6 +17,7 @@ class VisitaCard extends StatelessWidget {
     super.key,
     required this.visita,
     required this.attemptRemoteSave,
+    required this.interfaceConnectivityDetected,
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
@@ -30,6 +31,7 @@ class VisitaCard extends StatelessWidget {
 
   final Visita visita;
   final bool attemptRemoteSave;
+  final bool interfaceConnectivityDetected;
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
@@ -72,6 +74,7 @@ class VisitaCard extends StatelessWidget {
       context: context,
       visita: visita,
       attemptRemoteSave: attemptRemoteSave,
+      interfaceConnectivityDetected: interfaceConnectivityDetected,
       apiService: apiService,
       locationService: locationService,
       vendedorService: vendedorService,
@@ -85,6 +88,7 @@ class VisitaCard extends StatelessWidget {
       context: context,
       visita: visita,
       attemptRemoteSave: attemptRemoteSave,
+      interfaceConnectivityDetected: interfaceConnectivityDetected,
       apiService: apiService,
       locationService: locationService,
       vendedorService: vendedorService,

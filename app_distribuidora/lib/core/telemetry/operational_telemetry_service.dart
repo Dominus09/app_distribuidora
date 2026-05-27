@@ -219,6 +219,8 @@ class OperationalTelemetryService {
         DateTime.now().difference(ultimoGps) <
             TelemetryConfig.gpsPollMaxInterval * 2) {
       gpsEstado = OperacionalGpsEstado.activo;
+    } else if (ultimoGps == null) {
+      gpsEstado = OperacionalGpsEstado.buscando;
     } else {
       gpsEstado = OperacionalGpsEstado.sinSenal;
     }

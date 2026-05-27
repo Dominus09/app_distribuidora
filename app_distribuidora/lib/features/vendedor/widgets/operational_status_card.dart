@@ -239,6 +239,7 @@ class OperationalStatusCard extends StatelessWidget {
 
   static Color _colorGps(OperacionalGpsEstado e) => switch (e) {
         OperacionalGpsEstado.activo => AppColors.secondaryBlue,
+        OperacionalGpsEstado.buscando => AppColors.secondaryBlue,
         OperacionalGpsEstado.sinSenal => AppColors.primaryRed,
         OperacionalGpsEstado.inactivo =>
           AppColors.secondaryBlue.withValues(alpha: 0.45),

@@ -84,9 +84,18 @@ extension SyncStatusUi on SyncStatus {
   String get label => switch (this) {
     SyncStatus.synced => 'Sincronizado',
     SyncStatus.pendingSync => 'Pendiente de envío',
-    SyncStatus.syncing => 'Sincronizando… (reenvío)',
-    SyncStatus.syncError => 'Error de sincronización',
+    SyncStatus.syncing => 'Reenviando…',
+    SyncStatus.syncError => 'Error persistente',
     SyncStatus.deadLetter => 'No enviado (cola agotada)',
+  };
+
+  /// Etiqueta corta con indicador visual para listas.
+  String get labelConIndicador => switch (this) {
+    SyncStatus.synced => '🟢 Sincronizado',
+    SyncStatus.pendingSync => '🟡 Pendiente envío',
+    SyncStatus.syncing => '🔵 Reenviando',
+    SyncStatus.syncError => '🔴 Error persistente',
+    SyncStatus.deadLetter => '🔴 No enviado',
   };
 
   /// Valor persistido en caché local (`toJson`).

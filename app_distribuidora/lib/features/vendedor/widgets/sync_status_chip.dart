@@ -51,7 +51,7 @@ class SyncStatusChip extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              visita.syncStatus.label,
+              visita.syncStatus.labelConIndicador,
               style: theme.textTheme.labelLarge?.copyWith(
                 color: fg,
                 fontWeight: FontWeight.w700,

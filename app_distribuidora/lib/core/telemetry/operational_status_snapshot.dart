@@ -8,6 +8,7 @@ enum OperacionalEnlaceEstado {
 /// Estado del GPS en terreno.
 enum OperacionalGpsEstado {
   activo,
+  buscando,
   sinSenal,
   inactivo,
 }
@@ -62,6 +63,7 @@ class OperationalStatusSnapshot {
 
   String get gpsLabel => switch (gps) {
         OperacionalGpsEstado.activo => 'Activo',
+        OperacionalGpsEstado.buscando => 'Buscando GPS…',
         OperacionalGpsEstado.sinSenal => 'Sin señal',
         OperacionalGpsEstado.inactivo => 'Inactivo',
       };

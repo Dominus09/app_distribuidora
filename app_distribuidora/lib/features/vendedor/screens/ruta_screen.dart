@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/network/api_timeouts.dart';
+import '../../../core/ux/offline_ux.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
@@ -31,10 +33,16 @@ class RutaScreen extends StatefulWidget {
     required this.syncService,
     required this.apiService,
     this.reloadRuta,
+    this.persistVisitaWriteAhead,
   });
 
   final List<Visita> visitas;
   final ValueChanged<List<Visita>> onVisitasChanged;
+  /// Persiste en disco + outbox antes de sync HTTP (write-ahead).
+  final Future<List<Visita>> Function(
+    Visita updated,
+    List<Visita> current,
+  )? persistVisitaWriteAhead;
   final bool attemptRemoteSave;
   /// `connectivity_plus` (wifi/móvil/ethernet…) — puede estar en fallo en PDA/industrial.
   final bool interfaceConnectivityDetected;
@@ -170,91 +178,104 @@ class _RutaScreenState extends State<RutaScreen> {
     widget.onVisitasChanged(next);
   }
 
-  void _replaceAt(int index, Visita v) {
-    final next = [..._visitas];
-    next[index] = v;
-    _emit(next);
+  void _reemplazarVisitaPorId(Visita actualizada) {
+    unawaited(_guardarVisitaLocalPrimero(actualizada));
   }
 
-  void _reemplazarVisitaPorId(Visita actualizada) {
+  /// 1) UI inmediata  2) disco + outbox  3) mensaje éxito  4) HTTP en background.
+  Future<void> _guardarVisitaLocalPrimero(Visita actualizada) async {
     final idx = _visitas.indexWhere((v) => v.id == actualizada.id);
     if (idx < 0) return;
-    _replaceAt(idx, actualizada);
 
-    final debeIntentarRemoto = actualizada.syncStatus == SyncStatus.pendingSync ||
+    var next = [..._visitas];
+    next[idx] = actualizada;
+    _emit(next);
+
+    final persist = widget.persistVisitaWriteAhead;
+    if (persist != null) {
+      try {
+        next = await persist(actualizada, next);
+        if (mounted) _emit(next);
+      } catch (e) {
+        fieldLogImportant('Ruta', 'persist local: $e');
+      }
+    }
+
+    if (!mounted) return;
+    final omitirHttp = OfflineUx.debeOmitirHttp(
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      forceOffline: false,
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          OfflineUx.mensajeTrasGuardarLocal(omitirHttp: omitirHttp),
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+
+    final debeSync = actualizada.syncStatus == SyncStatus.pendingSync ||
         actualizada.syncStatus == SyncStatus.syncError;
-    if (debeIntentarRemoto) {
-      unawaited(_intentarSincronizarTrasGuardado(actualizada.id));
+    if (debeSync && widget.attemptRemoteSave) {
+      unawaited(_sincronizarEnSegundoPlano(actualizada.id));
     }
   }
 
-  Future<void> _intentarSincronizarTrasGuardado(String visitaId) async {
-    if (!widget.attemptRemoteSave) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Sin acceso configurado para envío en línea. El registro quedó '
-            'guardado en el dispositivo.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+  Future<void> _sincronizarEnSegundoPlano(String visitaId) async {
+    if (OfflineUx.debeOmitirHttp(
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      forceOffline: false,
+    )) {
       return;
     }
 
     final antesIdx = _visitas.indexWhere((v) => v.id == visitaId);
-    final SyncStatus estadoAntesSync =
-        antesIdx >= 0 ? _visitas[antesIdx].syncStatus : SyncStatus.pendingSync;
+    final estadoAntes = antesIdx >= 0
+        ? _visitas[antesIdx].syncStatus
+        : SyncStatus.pendingSync;
 
-    final reach = await widget.apiService.checkReachability();
-    fieldLog('Ruta sync preflight', reach.logLine);
-    if (!mounted) return;
-    if (!reach.ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${reach.userMessage} El registro quedó guardado; puedes usar '
-            '“Sincronizar” en inicio después.',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
+    final reach = await widget.apiService.checkReachability(
+      timeout: ApiTimeouts.reachability,
+    );
+    fieldLog('Ruta sync bg', reach.logLine);
+    if (!reach.ok) return;
 
-    final base = List<Visita>.from(_visitas);
     final syncTry = await widget.syncService.trySyncVisitaAfterLocalSave(
-      base,
+      List<Visita>.from(_visitas),
       visitaId,
       widget.apiService,
     );
     if (!mounted) return;
     _emit(syncTry.visitas);
 
-    final despuesIdx =
-        syncTry.visitas.indexWhere((v) => v.id == visitaId);
+    final despuesIdx = syncTry.visitas.indexWhere((v) => v.id == visitaId);
     final estadoDespues = despuesIdx >= 0
         ? syncTry.visitas[despuesIdx].syncStatus
-        : estadoAntesSync;
-    final pasoASincronizado = estadoAntesSync != SyncStatus.synced &&
+        : estadoAntes;
+    final sincronizado = estadoAntes != SyncStatus.synced &&
         estadoDespues == SyncStatus.synced;
 
-    if (pasoASincronizado && mounted && syncTry.error == null) {
+    if (sincronizado && syncTry.error == null && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Registro enviado y sincronizado con el servidor.',
-          ),
+          content: Text(OfflineUx.enviadoAlServidor),
           behavior: SnackBarBehavior.floating,
         ),
       );
+      return;
     }
 
-    if (syncTry.error != null && mounted) {
+    final err = syncTry.error;
+    if (err != null &&
+        mounted &&
+        OfflineUx.debeMostrarErrorAlUsuario(err.reason)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(syncTry.error!.userMessage),
+          content: Text(err.userMessage),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -351,6 +372,7 @@ class _RutaScreenState extends State<RutaScreen> {
           vendedorService: widget.vendedorService,
           syncService: widget.syncService,
           apiService: widget.apiService,
+          interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
           onVisitadoPressed: _reemplazarVisitaPorId,
           onIncidenciaPressed: _reemplazarVisitaPorId,
           onMapFocus: () => _centrarClienteEnMapa(visita),
@@ -361,6 +383,8 @@ class _RutaScreenState extends State<RutaScreen> {
                 builder: (_) => VisitaDetalleScreen(
                   visita: visita,
                   attemptRemoteSave: _puedeIntentarApi,
+                  interfaceConnectivityDetected:
+                      widget.interfaceConnectivityDetected,
                   locationService: widget.locationService,
                   vendedorService: widget.vendedorService,
                   syncService: widget.syncService,

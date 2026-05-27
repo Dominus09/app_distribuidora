@@ -4,15 +4,17 @@ import 'dart:io' show SocketException;
 
 import 'package:http/http.dart' as http;
 
+import '../../../core/network/api_timeouts.dart';
 import '../../../core/session/operational_scope.dart';
 import '../../../core/sync/operational_sync_log.dart';
 import '../../../core/sync/processed_action_record.dart';
 import '../../../core/telemetry/outbox_database.dart';
+import '../../../core/ux/offline_ux.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import 'api_service.dart';
 
-const Duration _kRegistrarTimeout = Duration(seconds: 25);
+const Duration _kRegistrarTimeout = ApiTimeouts.postVisita;
 
 /// Detalle de un fallo al enviar una visita (diálogo / SnackBar y trazas).
 class SyncVisitaErrorDetail {
@@ -26,7 +28,11 @@ class SyncVisitaErrorDetail {
   final String clientLabel;
   final String reason;
 
-  String get userMessage => 'Error en cliente $clientLabel: $reason';
+  String get userMessage {
+    final r = OfflineUx.sanitizarMensajeError(reason);
+    if (r == OfflineUx.guardadoSinConexion) return r;
+    return 'Error en cliente $clientLabel: $r';
+  }
 }
 
 /// Resultado de [SyncService.trySyncVisitaAfterLocalSave].
@@ -112,17 +118,13 @@ String _reasonForException(Object e) {
     return _humanizeHttpBody(e);
   }
   if (e is TimeoutException) {
-    return 'Tiempo de espera agotado al contactar el servidor';
+    return OfflineUx.guardadoSinConexion;
   }
   if (e is SocketException) {
-    final m = e.message.trim();
-    if (m.isNotEmpty) return 'Sin red hacia el servidor: $m';
-    return 'No hay conexión de red con el servidor';
+    return OfflineUx.guardadoSinConexion;
   }
   if (e is http.ClientException) {
-    final m = e.message.trim();
-    if (m.isNotEmpty) return 'Error de red cliente: $m';
-    return 'Error de red cliente al contactar el servidor';
+    return OfflineUx.guardadoSinConexion;
   }
   if (e is FormatException) {
     final m = e.message.trim();
