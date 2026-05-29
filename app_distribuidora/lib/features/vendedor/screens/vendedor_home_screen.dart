@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +14,7 @@ import '../../../core/telemetry/operational_status_snapshot.dart';
 import '../../../core/telemetry/operational_telemetry_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/field_log.dart';
+import '../../../core/utils/perf_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/georef_service.dart';
@@ -27,6 +27,7 @@ import '../widgets/ruta_activa_card.dart';
 import '../widgets/ruta_progreso_card.dart';
 import '../widgets/terreno_enlace_chip.dart';
 import '../services/georef_local_store.dart';
+import '../../../core/telemetry/outbox_database.dart';
 import '../../../core/telemetry/outbox_observability.dart';
 import '../../../core/telemetry/timer_registry.dart';
 import 'georef_pendientes_screen.dart';
@@ -153,6 +154,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   int _deadLetterCount = 0;
   int? _georefPendientesKpi;
   bool _georefKpiCargando = false;
+  bool _homeBootstrapping = true;
+  bool _rutaRemotaEnCurso = false;
   final _crashRecovery = CrashRecoveryService();
 
   @override
@@ -181,16 +184,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       onPeriodicVisitaSync: _syncPendientesSilencioso,
     );
     _rutaFuture = Future<List<Visita>>.value([]);
-    unawaited(GeorefLocalStore.purgeLegacyPendingCountCaches());
-    unawaited(_cargarKpiGeorefDesdeCache());
-    unawaited(_inicializarSesionVendedor().then((_) {
-      if (!mounted) return;
-      _rutaFuture = _cargarRutaDesdeApi();
-      _rutaFuture.then((list) {
-        if (mounted) setState(() => _visitas = list);
-      });
-      unawaited(_actualizarKpiGeoref());
-    }));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_bootstrapHome());
+    });
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final previousOk = _connectivityOk;
       final ok = _hayRedDatos(results);
@@ -233,7 +229,6 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         _kickApiReachProbes();
       }
     });
-    _scheduleRefrescarEstadoOperacional();
     _operacionalRefreshTimer = Timer.periodic(
       TelemetryConfig.operacionalUiRefreshInterval,
       (_) => _scheduleRefrescarEstadoOperacional(),
@@ -256,7 +251,91 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     );
   }
 
-  Future<void> _inicializarSesionVendedor() async {
+  Future<void> _bootstrapHome() async {
+    final perf = HomePerfMetrics();
+    final totalSw = Stopwatch()..start();
+
+    await _activarScopeSesion();
+    if (!mounted) return;
+
+    final hydrateSw = Stopwatch()..start();
+    await _prefetchVisitasDesdeDisco();
+    hydrateSw.stop();
+    perf.hydrateMs = hydrateSw.elapsedMilliseconds;
+
+    if (mounted) {
+      setState(() {
+        _homeBootstrapping = false;
+        _rutaFuture = Future<List<Visita>>.value(_visitas);
+      });
+    }
+    perf.homeTotalMs = totalSw.elapsedMilliseconds;
+    perfLog('home_visible_ms=${perf.homeTotalMs} cache_hydrate_ms=${perf.hydrateMs}');
+
+    await Future<void>.delayed(Duration.zero);
+
+    final recoverySw = Stopwatch()..start();
+    await _ejecutarRecuperacionTrasCrash();
+    recoverySw.stop();
+    perf.recoveryMs = recoverySw.elapsedMilliseconds;
+
+    await Future<void>.delayed(Duration.zero);
+
+    unawaited(GeorefLocalStore.purgeLegacyPendingCountCaches());
+
+    final georefCacheSw = Stopwatch()..start();
+    await _cargarKpiGeorefDesdeCache();
+    georefCacheSw.stop();
+
+    await Future<void>.delayed(Duration.zero);
+
+    if (!mounted) return;
+    setState(() => _rutaRemotaEnCurso = true);
+
+    final routeSw = Stopwatch()..start();
+    final georefRemoteSw = Stopwatch()..start();
+    List<Visita>? remoteList;
+    Object? routeError;
+    try {
+      await Future.wait<void>([
+        _cargarRutaDesdeApi().then((list) {
+          routeSw.stop();
+          remoteList = list;
+        }).catchError((Object e) {
+          routeSw.stop();
+          routeError = e;
+        }),
+        _actualizarKpiGeoref().whenComplete(() {
+          georefRemoteSw.stop();
+        }),
+      ]);
+    } finally {
+      perf.loadRouteMs = routeSw.elapsedMilliseconds;
+      perf.georefKpiMs = georefRemoteSw.elapsedMilliseconds;
+      if (mounted) {
+        setState(() {
+          if (remoteList != null) {
+            _visitas = remoteList!;
+            _rutaFuture = Future<List<Visita>>.value(remoteList!);
+          }
+          _rutaRemotaEnCurso = false;
+        });
+      }
+    }
+    if (routeError != null && mounted && _visitas.isEmpty) {
+      setState(() {
+        _rutaFuture = Future<List<Visita>>.error(routeError!);
+      });
+    }
+
+    perf.sqliteMs = OutboxDatabase.instance.lastOpenDurationMs ?? 0;
+    perf.homeTotalMs = totalSw.elapsedMilliseconds;
+    perf.logSummary();
+
+    if (mounted) _scheduleRefrescarEstadoOperacional();
+  }
+
+  Future<void> _activarScopeSesion() async {
     final activation = await SessionManager.instance.activateForLogin(
       widget.vendedorCodigo,
       preserveSessionIfSameVendor: true,
@@ -275,9 +354,6 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     );
     _telemetry.bindOperationalScope(_operationalScope);
     _syncService.bindOperationalScope(_operationalScope);
-    if (!mounted) return;
-    await _prefetchVisitasDesdeDisco();
-    await _ejecutarRecuperacionTrasCrash();
   }
 
   Future<void> _ejecutarRecuperacionTrasCrash() async {
@@ -581,12 +657,17 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   void _programarRecargaRuta() {
-    setState(() {
-      _rutaFuture = _cargarRutaDesdeApi();
-    });
-    _rutaFuture.then((list) {
-      if (mounted) setState(() => _visitas = list);
-    });
+    setState(() => _rutaRemotaEnCurso = true);
+    unawaited(_cargarRutaDesdeApi().then((list) {
+      if (!mounted) return;
+      setState(() {
+        _visitas = list;
+        _rutaFuture = Future<List<Visita>>.value(list);
+        _rutaRemotaEnCurso = false;
+      });
+    }).catchError((_) {
+      if (mounted) setState(() => _rutaRemotaEnCurso = false);
+    }));
     unawaited(_actualizarKpiGeoref());
   }
 
@@ -1142,10 +1223,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         future: _rutaFuture,
         builder: (context, snapshot) {
           late final Widget bodyContent;
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              _visitas.isEmpty) {
+          if (_homeBootstrapping && _visitas.isEmpty) {
             bodyContent = const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError && _visitas.isEmpty) {
+          } else if (snapshot.hasError && _visitas.isEmpty && !_rutaRemotaEnCurso) {
             bodyContent = Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),

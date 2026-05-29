@@ -29,13 +29,19 @@ class CrashRecoveryService {
     );
 
     var visitas = syncService.normalizeStuckSyncing(runtimeVisitas);
+    final hadStuckSyncing =
+        runtimeVisitas.any((v) => v.syncStatus == SyncStatus.syncing);
 
-    final disk = await vendedorService.loadVisitasFromDisk(scope) ?? <Visita>[];
-    if (disk.isNotEmpty || visitas.isNotEmpty) {
-      visitas = VendedorService.fusionarDiscoYMemoria(
-        disco: disk,
-        memoria: visitas,
-      );
+    if (visitas.isEmpty) {
+      final disk = await vendedorService.loadVisitasFromDisk(scope) ?? <Visita>[];
+      if (disk.isNotEmpty) {
+        visitas = VendedorService.fusionarDiscoYMemoria(
+          disco: disk,
+          memoria: visitas,
+        );
+        await vendedorService.persistVisitasToDisk(scope, visitas);
+      }
+    } else if (hadStuckSyncing) {
       await vendedorService.persistVisitasToDisk(scope, visitas);
     }
 

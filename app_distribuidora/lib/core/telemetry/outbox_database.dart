@@ -9,6 +9,7 @@ import '../session/session_manager.dart';
 import '../sync/outbox_sync_state.dart';
 import '../sync/processed_action_record.dart';
 import '../utils/field_log.dart';
+import '../utils/perf_log.dart';
 import 'outbox_observability.dart';
 import 'gps_km_calculator.dart';
 import 'outbox_item_type.dart';
@@ -92,6 +93,7 @@ class OutboxDatabase {
   static const _orphanVendedor = '__orphan__';
 
   Database? _db;
+  int? lastOpenDurationMs;
 
   String _requireVendedor(String? explicit) {
     final id = (explicit ?? SessionManager.instance.currentVendedorId)?.trim();
@@ -108,15 +110,19 @@ class OutboxDatabase {
   }
 
   Future<Database> _open() async {
+    final sw = Stopwatch()..start();
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, 'operational_telemetry.db');
     fieldLog('OutboxDB', 'abriendo $path v$_dbVersion');
-    return openDatabase(
+    final db = await openDatabase(
       path,
       version: _dbVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
+    lastOpenDurationMs = sw.elapsedMilliseconds;
+    perfLog('sqlite_open_ms=$lastOpenDurationMs');
+    return db;
   }
 
   Future<void> _onCreate(Database db, int version) async {
