@@ -5,6 +5,7 @@ import '../../../core/telemetry/outbox_queue_service.dart';
 import '../../../core/ux/offline_ux.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/georef_estado.dart';
+import '../models/georef_origen.dart';
 import '../models/georef_pendiente.dart';
 import '../models/visita.dart';
 import 'api_service.dart';
@@ -61,6 +62,7 @@ class GeorefService {
     required double lon,
     String? observacion,
     List<Visita>? visitasActuales,
+    GeorefOrigen origen = GeorefOrigen.gpsTerreno,
     bool omitirHttp = true,
   }) async {
     final actionId = vendedorService.generateLocalActionId();
@@ -68,6 +70,7 @@ class GeorefService {
       latEfectiva: lat,
       lonEfectiva: lon,
       georefEstado: GeorefEstado.capturada,
+      georefOrigen: origen,
       localSyncStatus: GeorefSyncStatus.pendingSync,
       localActionId: actionId,
       observacion: observacion ?? item.observacion,
@@ -97,7 +100,10 @@ class GeorefService {
       vendedorId: scope.vendedorIdTrimmed,
       lat: lat,
       lon: lon,
-      source: 'GeorefService.capturarUbicacion',
+      origen: origen,
+      source: origen == GeorefOrigen.mapaManual
+          ? 'GeorefService.capturarDesdeMapa'
+          : 'GeorefService.capturarUbicacion',
     );
 
     if (!omitirHttp) {

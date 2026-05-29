@@ -3,8 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app_distribuidora/core/coordenadas/coordenadas_efectivas.dart';
 import 'package:app_distribuidora/core/telemetry/outbox_database.dart';
 import 'package:app_distribuidora/features/vendedor/models/georef_estado.dart';
+import 'package:app_distribuidora/features/vendedor/models/georef_origen.dart';
 import 'package:app_distribuidora/features/vendedor/models/georef_pendiente.dart';
 import 'package:app_distribuidora/features/vendedor/models/visita.dart';
+import 'package:app_distribuidora/features/vendedor/services/address_geocoder.dart';
 import 'package:app_distribuidora/features/vendedor/services/georef_local_store.dart';
 
 void main() {
@@ -126,6 +128,58 @@ void main() {
       expect(body['ruta_id'], 7);
       expect(body['lat'], -33.1);
       expect(body['local_action_id'], 'act-1');
+    });
+
+    test('payload incluye georef_origen mapa_manual', () {
+      const item = GeorefPendiente(
+        rutaId: 1,
+        clienteId: 'c1',
+        clienteNombre: 'X',
+        direccion: 'Y',
+        latEfectiva: 0,
+        lonEfectiva: 0,
+        georefEstado: GeorefEstado.capturada,
+        georefOrigen: GeorefOrigen.mapaManual,
+        localActionId: 'act-2',
+      );
+      final body = item.toApiUpdatePayload(
+        vendedorId: 'v3',
+        lat: -33.2,
+        lon: -70.7,
+        origen: GeorefOrigen.mapaManual,
+      );
+      expect(body['georef_origen'], 'mapa_manual');
+    });
+
+    test('cliente aplicado y sincronizado no queda en merge local', () {
+      const local = GeorefPendiente(
+        rutaId: 10,
+        clienteId: 'c1',
+        clienteNombre: 'Cliente',
+        direccion: 'Dir',
+        latEfectiva: -33.1,
+        lonEfectiva: -70.6,
+        georefEstado: GeorefEstado.aplicada,
+        localSyncStatus: GeorefSyncStatus.synced,
+      );
+      final merged = GeorefLocalStore.mergeServidorConLocal(
+        servidor: const [],
+        local: [local],
+      );
+      expect(merged, isEmpty);
+    });
+  });
+
+  group('AddressGeocoder.buildSearchQueries', () {
+    test('prioriza dirección completa con comuna y ciudad', () {
+      final q = AddressGeocoder.buildSearchQueries(
+        direccion: 'Av. Principal 100',
+        comuna: 'Quillota',
+        ciudad: 'Valparaíso',
+      );
+      expect(q.first, 'Av. Principal 100, Quillota, Valparaíso, Chile');
+      expect(q, contains('Quillota, Valparaíso, Chile'));
+      expect(q.last, 'Valparaíso, Chile');
     });
   });
 

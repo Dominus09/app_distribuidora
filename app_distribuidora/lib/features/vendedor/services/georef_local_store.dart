@@ -74,7 +74,9 @@ class GeorefLocalStore {
           clienteNombre: s.clienteNombre,
           direccion: s.direccion,
           comuna: s.comuna,
+          ciudad: s.ciudad ?? l.ciudad,
           ruteroId: s.ruteroId ?? l.ruteroId,
+          georefOrigen: l.georefOrigen ?? s.georefOrigen,
         );
       }
       return s;

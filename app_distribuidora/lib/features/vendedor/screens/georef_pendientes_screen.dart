@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import '../../../core/session/operational_scope.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/ux/offline_ux.dart';
+import '../models/georef_origen.dart';
 import '../models/georef_pendiente.dart';
 import '../services/georef_service.dart';
 import '../services/location_service.dart';
 import '../widgets/visit_action_sheets.dart';
+import 'georef_mapa_screen.dart';
 
 /// Lista de clientes con georef pendiente o captura local.
 class GeorefPendientesScreen extends StatefulWidget {
@@ -54,7 +56,7 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
     });
   }
 
-  Future<void> _capturar(GeorefPendiente item) async {
+  Future<void> _capturarGps(GeorefPendiente item) async {
     setState(() => _capturandoClave = item.claveLocal);
     try {
       final fast = OfflineUx.debeOmitirHttp(
@@ -85,6 +87,7 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
         item: item,
         lat: snap.latitude,
         lon: snap.longitude,
+        origen: GeorefOrigen.gpsTerreno,
         omitirHttp: fast,
       );
       if (!mounted) return;
@@ -95,6 +98,27 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
         ),
       );
       await _reload();
+    } finally {
+      if (mounted) setState(() => _capturandoClave = null);
+    }
+  }
+
+  Future<void> _abrirMapa(GeorefPendiente item) async {
+    setState(() => _capturandoClave = item.claveLocal);
+    try {
+      final ok = await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => GeorefMapaScreen(
+            item: item,
+            scope: widget.scope,
+            georefService: widget.georefService,
+            interfaceConnectivityDetected:
+                widget.interfaceConnectivityDetected,
+            attemptRemoteSave: widget.attemptRemoteSave,
+          ),
+        ),
+      );
+      if (ok == true) await _reload();
     } finally {
       if (mounted) setState(() => _capturandoClave = null);
     }
@@ -168,6 +192,16 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                                   ),
                                 ),
                               ],
+                              if (item.ciudad != null &&
+                                  item.ciudad!.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  item.ciudad!,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 8),
                               Text(
                                 item.estadoUiLabel,
@@ -177,7 +211,8 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                               ),
                               const SizedBox(height: 12),
                               FilledButton.icon(
-                                onPressed: busy ? null : () => _capturar(item),
+                                onPressed:
+                                    busy ? null : () => _capturarGps(item),
                                 icon: busy
                                     ? const SizedBox(
                                         width: 18,
@@ -186,8 +221,36 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                                           strokeWidth: 2,
                                         ),
                                       )
-                                    : const Icon(Icons.add_location_alt_outlined),
-                                label: const Text('Guardar ubicación'),
+                                    : const Icon(Icons.my_location),
+                                label: const Text('Capturar GPS actual'),
+                                style: FilledButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 48),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                GeorefOrigen.gpsTerreno.uxHint,
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              OutlinedButton.icon(
+                                onPressed: busy ? null : () => _abrirMapa(item),
+                                icon: const Icon(Icons.map_outlined),
+                                label: const Text('Asignar desde mapa'),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 48),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                GeorefOrigen.mapaManual.uxHint,
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: AppColors.estadoPendiente,
+                                ),
                               ),
                             ],
                           ),

@@ -1,5 +1,6 @@
 import '../../../core/coordenadas/coordenadas_efectivas.dart';
 import 'georef_estado.dart';
+import 'georef_origen.dart';
 import 'visita.dart';
 import '../utils/maps_navigation.dart';
 
@@ -11,10 +12,12 @@ class GeorefPendiente {
     required this.clienteNombre,
     required this.direccion,
     this.comuna,
+    this.ciudad,
     this.ruteroId,
     required this.latEfectiva,
     required this.lonEfectiva,
     required this.georefEstado,
+    this.georefOrigen,
     this.localSyncStatus = GeorefSyncStatus.synced,
     this.localActionId,
     this.observacion,
@@ -25,10 +28,12 @@ class GeorefPendiente {
   final String clienteNombre;
   final String direccion;
   final String? comuna;
+  final String? ciudad;
   final int? ruteroId;
   final double latEfectiva;
   final double lonEfectiva;
   final GeorefEstado georefEstado;
+  final GeorefOrigen? georefOrigen;
   final GeorefSyncStatus localSyncStatus;
   final String? localActionId;
   final String? observacion;
@@ -58,6 +63,8 @@ class GeorefPendiente {
   String get estadoUiLabel {
     if (localSyncStatus == GeorefSyncStatus.pendingSync ||
         localSyncStatus == GeorefSyncStatus.syncing) {
+      final origen = georefOrigen?.uxHint;
+      if (origen != null) return '${GeorefEstado.capturada.label} · $origen';
       return GeorefEstado.capturada.label;
     }
     if (localSyncStatus == GeorefSyncStatus.syncError) {
@@ -79,10 +86,12 @@ class GeorefPendiente {
           .toString(),
       direccion: (json['direccion'] ?? json['address'] ?? '—').toString(),
       comuna: json['comuna']?.toString(),
+      ciudad: json['ciudad']?.toString(),
       ruteroId: _int(json['rutero_id']),
       latEfectiva: lat,
       lonEfectiva: lon,
       georefEstado: parseGeorefEstado(json['georef_estado']?.toString()),
+      georefOrigen: parseGeorefOrigen(json['georef_origen']?.toString()),
       localSyncStatus: _parseLocalSync(json['local_sync_status']?.toString()),
       localActionId: json['local_action_id']?.toString(),
       observacion: json['observacion']?.toString(),
@@ -95,10 +104,12 @@ class GeorefPendiente {
         'cliente_nombre': clienteNombre,
         'direccion': direccion,
         if (comuna != null) 'comuna': comuna,
+        if (ciudad != null) 'ciudad': ciudad,
         if (ruteroId != null) 'rutero_id': ruteroId,
         'lat_efectiva': latEfectiva,
         'lon_efectiva': lonEfectiva,
         'georef_estado': georefEstado.apiValue,
+        if (georefOrigen != null) 'georef_origen': georefOrigen!.apiValue,
         'local_sync_status': localSyncStatus.name,
         if (localActionId != null) 'local_action_id': localActionId,
         if (observacion != null) 'observacion': observacion,
@@ -110,10 +121,12 @@ class GeorefPendiente {
     String? clienteNombre,
     String? direccion,
     String? comuna,
+    String? ciudad,
     int? ruteroId,
     double? latEfectiva,
     double? lonEfectiva,
     GeorefEstado? georefEstado,
+    GeorefOrigen? georefOrigen,
     GeorefSyncStatus? localSyncStatus,
     String? localActionId,
     String? observacion,
@@ -124,10 +137,12 @@ class GeorefPendiente {
       clienteNombre: clienteNombre ?? this.clienteNombre,
       direccion: direccion ?? this.direccion,
       comuna: comuna ?? this.comuna,
+      ciudad: ciudad ?? this.ciudad,
       ruteroId: ruteroId ?? this.ruteroId,
       latEfectiva: latEfectiva ?? this.latEfectiva,
       lonEfectiva: lonEfectiva ?? this.lonEfectiva,
       georefEstado: georefEstado ?? this.georefEstado,
+      georefOrigen: georefOrigen ?? this.georefOrigen,
       localSyncStatus: localSyncStatus ?? this.localSyncStatus,
       localActionId: localActionId ?? this.localActionId,
       observacion: observacion ?? this.observacion,
@@ -138,7 +153,9 @@ class GeorefPendiente {
     required String vendedorId,
     required double lat,
     required double lon,
+    GeorefOrigen? origen,
   }) {
+    final o = origen ?? georefOrigen;
     return {
       'ruta_id': rutaId,
       'lat': lat,
@@ -147,6 +164,7 @@ class GeorefPendiente {
       if (clienteId.isNotEmpty) 'cliente_id': clienteId,
       if (ruteroId != null) 'rutero_id': ruteroId,
       if (localActionId != null) 'local_action_id': localActionId,
+      if (o != null) 'georef_origen': o.apiValue,
       if (observacion != null && observacion!.isNotEmpty)
         'observacion': observacion,
     };

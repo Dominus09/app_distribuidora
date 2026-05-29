@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../features/vendedor/models/georef_origen.dart';
 import '../../features/vendedor/models/georef_pendiente.dart';
 import '../../features/vendedor/models/visita.dart';
 import '../../features/vendedor/services/api_service.dart';
@@ -377,6 +378,7 @@ class OutboxQueueService {
     required String vendedorId,
     required double lat,
     required double lon,
+    GeorefOrigen? origen,
     required String source,
   }) async {
     final stack = OutboxObservability.captureCallerStack();
@@ -386,6 +388,7 @@ class OutboxQueueService {
       vendedorId: vendedorId,
       lat: lat,
       lon: lon,
+      origen: origen,
     );
     await _db.enqueue(
       vendedorId: vendedorId,
