@@ -197,6 +197,7 @@ class Visita {
     this.nombreFantasia,
     required this.direccion,
     this.comuna,
+    this.telefono,
     this.rutClean,
     /// Día en que el cliente entra en ruta (API `dia_operativo`; antes `dia_atencion`).
     this.diaOperativo,
@@ -235,6 +236,9 @@ class Visita {
   /// Comuna del cliente (`comuna` en API).
   final String? comuna;
 
+  /// Teléfono de contacto si el backend lo envía (`telefono`, `celular`, etc.).
+  final String? telefono;
+
   /// RUT sin formato (`rut_clean` en API).
   final String? rutClean;
 
@@ -247,6 +251,12 @@ class Visita {
     final n = nombreFantasia?.trim();
     if (n != null && n.isNotEmpty) return n;
     return clienteNombre;
+  }
+
+  bool get tieneTelefonoLlamable {
+    final t = telefono?.trim();
+    if (t == null || t.isEmpty) return false;
+    return t.replaceAll(RegExp(r'[^\d]'), '').length >= 8;
   }
 
   final int orden;
@@ -350,6 +360,7 @@ class Visita {
       nombreFantasia: _str(json, 'nombre_fantasia'),
       direccion: _parseDireccion(json),
       comuna: _str(json, 'comuna'),
+      telefono: _parseTelefono(json),
       rutClean: _str(json, 'rut_clean', 'rutClean'),
       diaOperativo: _parseDiaOperativo(json),
       orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
@@ -381,6 +392,7 @@ class Visita {
       if (nombreFantasia != null) 'nombre_fantasia': nombreFantasia,
       'direccion': direccion,
       if (comuna != null) 'comuna': comuna,
+      if (telefono != null) 'telefono': telefono,
       if (rutClean != null) 'rut_clean': rutClean,
       if (diaOperativo != null) 'dia_operativo': diaOperativo,
       'orden_ruta': orden,
@@ -481,6 +493,7 @@ class Visita {
     Object? nombreFantasia = _sentinel,
     String? direccion,
     Object? comuna = _sentinel,
+    Object? telefono = _sentinel,
     Object? rutClean = _sentinel,
     Object? diaOperativo = _sentinel,
     int? orden,
@@ -510,6 +523,7 @@ class Visita {
           : nombreFantasia as String?,
       direccion: direccion ?? this.direccion,
       comuna: comuna == _sentinel ? this.comuna : comuna as String?,
+      telefono: telefono == _sentinel ? this.telefono : telefono as String?,
       rutClean: rutClean == _sentinel ? this.rutClean : rutClean as String?,
       diaOperativo: diaOperativo == _sentinel
           ? this.diaOperativo
@@ -602,6 +616,21 @@ String? _parseClienteId(dynamic v) {
   if (v == null) return null;
   final s = v.toString().trim();
   return s.isEmpty ? null : s;
+}
+
+String? _parseTelefono(Map<String, dynamic> json) {
+  for (final key in [
+    'telefono',
+    'teléfono',
+    'telefono_cliente',
+    'celular',
+    'phone',
+    'fono',
+  ]) {
+    final s = _str(json, key);
+    if (s != null && s.isNotEmpty) return s;
+  }
+  return null;
 }
 
 int? _parseInt(dynamic v) {

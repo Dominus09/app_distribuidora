@@ -23,6 +23,9 @@ import 'visita_detalle_screen.dart';
 /// Cómo ordenar clientes dentro de pendientes y de completados.
 enum _ModoOrdenLista { ordenRuta, distancia }
 
+/// Filtro de lista al abrir desde Home (Acciones).
+enum RutaListaFiltro { todos, soloIncidencias, soloPendientes }
+
 /// Lista operativa del día con base de salida y tarjetas por cliente.
 class RutaScreen extends StatefulWidget {
   const RutaScreen({
@@ -39,12 +42,14 @@ class RutaScreen extends StatefulWidget {
     this.persistVisitaWriteAhead,
     this.operationalScope,
     this.georefService,
+    this.filtroLista = RutaListaFiltro.todos,
   });
 
   final List<Visita> visitas;
   final ValueChanged<List<Visita>> onVisitasChanged;
   final OperationalScope? operationalScope;
   final GeorefService? georefService;
+  final RutaListaFiltro filtroLista;
   /// Persiste en disco + outbox antes de sync HTTP (write-ahead).
   final Future<List<Visita>> Function(
     Visita updated,
@@ -383,12 +388,52 @@ class _RutaScreenState extends State<RutaScreen> {
     );
   }
 
+  List<Visita> _visitasSegunFiltro() {
+    switch (widget.filtroLista) {
+      case RutaListaFiltro.todos:
+        return List<Visita>.from(_visitas);
+      case RutaListaFiltro.soloIncidencias:
+        return _visitas
+            .where((v) => v.estado == VisitaEstado.incidencia)
+            .toList();
+      case RutaListaFiltro.soloPendientes:
+        return _visitas
+            .where((v) => v.estado == VisitaEstado.pendiente)
+            .toList();
+    }
+  }
+
+  String get _tituloPantalla => switch (widget.filtroLista) {
+        RutaListaFiltro.todos => 'Ruta del día',
+        RutaListaFiltro.soloIncidencias => 'Incidencias',
+        RutaListaFiltro.soloPendientes => 'Clientes pendientes',
+      };
+
   List<Widget> _sliversListaOrdenada(BuildContext context) {
     final porDistancia = _modoOrden == _ModoOrdenLista.distancia;
-    final pendientes = _visitas
+    final base = _visitasSegunFiltro();
+    if (base.isEmpty) {
+      return [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+            child: Text(
+              widget.filtroLista == RutaListaFiltro.soloIncidencias
+                  ? 'No hay incidencias registradas hoy.'
+                  : 'No hay clientes en esta vista.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ),
+      ];
+    }
+    final pendientes = base
         .where((v) => v.estado == VisitaEstado.pendiente)
         .toList();
-    final completados = _visitas
+    final completados = base
         .where((v) => v.estado != VisitaEstado.pendiente)
         .toList();
     _ordenarGrupo(pendientes, porDistancia: porDistancia);
@@ -423,6 +468,8 @@ class _RutaScreenState extends State<RutaScreen> {
                   syncService: widget.syncService,
                   apiService: widget.apiService,
                   onGeorefDesdeIncidencia: _capturarGeorefDesdeIncidencia,
+                  georefService: widget.georefService,
+                  operationalScope: widget.operationalScope,
                 ),
               ),
             );
@@ -501,9 +548,9 @@ class _RutaScreenState extends State<RutaScreen> {
               fit: BoxFit.contain,
             ),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Text(
-                'Ruta del día',
+                _tituloPantalla,
                 overflow: TextOverflow.ellipsis,
               ),
             ),

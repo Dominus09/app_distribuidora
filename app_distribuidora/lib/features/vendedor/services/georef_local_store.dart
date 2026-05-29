@@ -58,6 +58,22 @@ class GeorefLocalStore {
     await save(scope, lista);
   }
 
+  /// KPI Home: `georef_pending_count__<vendedor>` (solo contador del GET).
+  static String pendingCountKeyFor(String vendedorId) =>
+      'georef_pending_count__${vendedorId.trim()}';
+
+  static Future<int?> loadPendingCountCache(String vendedorId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = pendingCountKeyFor(vendedorId);
+    if (!prefs.containsKey(key)) return null;
+    return prefs.getInt(key);
+  }
+
+  static Future<void> savePendingCountCache(String vendedorId, int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(pendingCountKeyFor(vendedorId), count);
+  }
+
   /// Fusiona servidor con cambios locales pendientes (no pierde capturas offline).
   static List<GeorefPendiente> mergeServidorConLocal({
     required List<GeorefPendiente> servidor,

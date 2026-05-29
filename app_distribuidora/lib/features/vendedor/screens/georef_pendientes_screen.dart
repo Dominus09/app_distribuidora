@@ -129,7 +129,19 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Clientes sin georreferencia'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Clientes sin georreferencia'),
+            if (!_loading)
+              Text(
+                'Pendientes: ${_items.length}',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -176,39 +188,20 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                             children: [
                               Text(
                                 item.clienteNombre,
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.w800,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              Text(item.direccion),
+                              const SizedBox(height: 6),
+                              Text('📍 ${item.direccion}'),
                               if (item.comuna != null &&
-                                  item.comuna!.isNotEmpty) ...[
-                                const SizedBox(height: 2),
+                                  item.comuna!.isNotEmpty)
                                 Text(
                                   item.comuna!,
-                                  style: theme.textTheme.bodySmall?.copyWith(
+                                  style: theme.textTheme.bodyMedium?.copyWith(
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),
                                 ),
-                              ],
-                              if (item.ciudad != null &&
-                                  item.ciudad!.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  item.ciudad!,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 8),
-                              Text(
-                                item.estadoUiLabel,
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
                               const SizedBox(height: 12),
                               FilledButton.icon(
                                 onPressed:
@@ -222,34 +215,18 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                                         ),
                                       )
                                     : const Icon(Icons.my_location),
-                                label: const Text('Capturar GPS actual'),
+                                label: const Text('GPS actual'),
                                 style: FilledButton.styleFrom(
-                                  minimumSize: const Size(double.infinity, 48),
+                                  minimumSize: const Size(double.infinity, 50),
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                GeorefOrigen.gpsTerreno.uxHint,
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 8),
                               OutlinedButton.icon(
                                 onPressed: busy ? null : () => _abrirMapa(item),
                                 icon: const Icon(Icons.map_outlined),
-                                label: const Text('Asignar desde mapa'),
+                                label: const Text('Buscar en mapa'),
                                 style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size(double.infinity, 48),
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                GeorefOrigen.mapaManual.uxHint,
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: AppColors.estadoPendiente,
+                                  minimumSize: const Size(double.infinity, 50),
                                 ),
                               ),
                             ],

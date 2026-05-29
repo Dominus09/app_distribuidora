@@ -28,6 +28,7 @@ class OperationalStatusSnapshot {
     this.ultimoHeartbeat,
     required this.telemetriaActiva,
     required this.sincronizando,
+    this.pendientesTelemetria = 0,
   });
 
   final OperacionalEnlaceEstado enlace;
@@ -46,8 +47,16 @@ class OperationalStatusSnapshot {
   final DateTime? ultimoHeartbeat;
   final bool telemetriaActiva;
   final bool sincronizando;
+  /// Ítems heartbeat / gps_track en cola (no cambian «En línea»).
+  final int pendientesTelemetria;
 
   int get visitasSyncCount => visitasSyncPendientes ?? visitasPendientes;
+
+  /// Visitas o georef con envío pendiente.
+  bool get hayPendienteOperacional =>
+      pendientesCola > 0 || visitasSyncCount > 0;
+
+  bool get hayTelemetriaPendiente => pendientesTelemetria > 0;
 
   /// Total mostrado en UI (desglosar con [colaSqliteLabel] / [visitasSyncLabel]).
   int get pendientesTotal => pendientesCola + visitasSyncCount;

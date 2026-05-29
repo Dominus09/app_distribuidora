@@ -206,7 +206,33 @@ void main() {
         stuckSamples: [],
       );
       expect(diag.pendingOperacionalCount, 1);
+      expect(diag.pendingTelemetriaCount, 2);
       expect(diag.pendingCount, 3);
+    });
+
+    test('solo telemetría pendiente no cuenta como operacional', () {
+      const diag = OutboxDiagnostics(
+        pendingCount: 2,
+        deadLetterCount: 0,
+        legacyNullFechaPending: 0,
+        byTypeAndState: [
+          OutboxTypeStateCount(
+            itemType: 'heartbeat',
+            syncState: 'pending',
+            count: 1,
+            maxRetry: 0,
+          ),
+          OutboxTypeStateCount(
+            itemType: 'gps_track',
+            syncState: 'syncing',
+            count: 1,
+            maxRetry: 0,
+          ),
+        ],
+        stuckSamples: [],
+      );
+      expect(diag.pendingOperacionalCount, 0);
+      expect(diag.pendingTelemetriaCount, 2);
     });
   });
 }

@@ -226,27 +226,25 @@ class OperationalTelemetryService {
     }
 
     OperacionalEnlaceEstado enlace;
+    final visitasSync = visitasPendientes;
+    final colaOperacional = diag.pendingOperacionalCount;
+    final hayPendienteOperacional = visitasSync > 0 || colaOperacional > 0;
+
     if (!puedeEnviarAlServidor) {
       enlace = OperacionalEnlaceEstado.offline;
-    } else if (sincronizando ||
-        _queue.isFlushing ||
-        (diag.pendingOperacionalCount > 0 && puedeEnviarAlServidor)) {
-      enlace = OperacionalEnlaceEstado.reintentando;
-    } else if (enRuta && ultimoHb != null) {
-      final age = DateTime.now().difference(ultimoHb);
-      enlace = age <= TelemetryConfig.heartbeatInterval * 2
-          ? OperacionalEnlaceEstado.online
-          : OperacionalEnlaceEstado.reintentando;
-    } else if (enRuta) {
+    } else if (hayPendienteOperacional) {
       enlace = OperacionalEnlaceEstado.reintentando;
     } else {
       enlace = OperacionalEnlaceEstado.online;
     }
 
+    final sincronizandoOperacional =
+        (sincronizando || _queue.isFlushing) && hayPendienteOperacional;
+
     return OperationalStatusSnapshot(
       enlace: enlace,
       gps: gpsEstado,
-      pendientesCola: diag.pendingOperacionalCount,
+      pendientesCola: colaOperacional,
       pendientesColaTotal: diag.pendingCount,
       visitasPendientes: visitasPendientes,
       visitasSyncPendientes: visitasPendientes,
@@ -255,7 +253,8 @@ class OperationalTelemetryService {
       kmHoy: km,
       ultimoHeartbeat: ultimoHb,
       telemetriaActiva: enRuta && _active,
-      sincronizando: sincronizando,
+      sincronizando: sincronizandoOperacional,
+      pendientesTelemetria: diag.pendingTelemetriaCount,
     );
   }
 

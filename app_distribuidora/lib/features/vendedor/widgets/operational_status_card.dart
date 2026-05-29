@@ -1,22 +1,32 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/telemetry/operational_status_snapshot.dart';
 import '../../../core/theme/app_colors.dart';
 
-/// Tarjeta compacta: conexión, último envío, cola, km y GPS.
-class OperationalStatusCard extends StatelessWidget {
+/// Estado en terreno: enlace + GPS visibles; diagnóstico técnico expandible.
+class OperationalStatusCard extends StatefulWidget {
   const OperationalStatusCard({
     super.key,
     this.snapshot,
     this.isLoading = false,
+    this.onOpenOutboxDebug,
   });
 
   final OperationalStatusSnapshot? snapshot;
   final bool isLoading;
+  final VoidCallback? onOpenOutboxDebug;
+
+  @override
+  State<OperationalStatusCard> createState() => _OperationalStatusCardState();
+}
+
+class _OperationalStatusCardState extends State<OperationalStatusCard> {
+  bool _diagnosticoExpandido = false;
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading || snapshot == null) {
+    if (widget.isLoading || widget.snapshot == null) {
       return Card(
         elevation: 0,
         margin: EdgeInsets.zero,
@@ -39,10 +49,11 @@ class OperationalStatusCard extends StatelessWidget {
       );
     }
 
-    final snap = snapshot!;
+    final snap = widget.snapshot!;
     final theme = Theme.of(context);
     final enlaceColor = _colorEnlace(snap.enlace);
     final gpsColor = _colorGps(snap.gps);
+    final gpsLabel = _gpsLabelTerreno(snap.gps);
 
     return Card(
       elevation: 0,
@@ -53,175 +64,127 @@ class OperationalStatusCard extends StatelessWidget {
         side: BorderSide(color: enlaceColor.withValues(alpha: 0.35), width: 1.2),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                _StatusDot(color: enlaceColor),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    snap.enlaceLabel,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: enlaceColor,
-                    ),
-                  ),
-                ),
-                if (snap.sincronizando)
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: enlaceColor,
-                    ),
-                  )
-                else
-                  Icon(
-                    _iconoEnlace(snap.enlace),
-                    size: 20,
+                  child: _EstadoPill(
+                    icon: _iconoEnlace(snap.enlace),
+                    label: _enlaceLabelTerreno(snap.enlace),
                     color: enlaceColor,
                   ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
+                ),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: _MetricCell(
-                    icon: Icons.sync_rounded,
-                    label: 'Último envío',
-                    value: snap.ultimoEnvioLabel,
-                    color: AppColors.secondaryBlue,
-                  ),
-                ),
-                Container(
-                  width: 1,
-                  height: 40,
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-                Expanded(
-                  child: _MetricCell(
-                    icon: Icons.cloud_upload_outlined,
-                    label: 'Cola SQLite',
-                    value: snap.colaSqliteLabel,
-                    color: snap.pendientesCola > 0
-                        ? AppColors.estadoPendiente
-                        : AppColors.secondaryBlue,
-                    destacar: snap.pendientesCola > 0,
-                  ),
-                ),
-                Container(
-                  width: 1,
-                  height: 40,
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-                Expanded(
-                  child: _MetricCell(
-                    icon: Icons.pending_actions_outlined,
-                    label: 'Visitas sync',
-                    value: snap.visitasSyncLabel,
-                    color: snap.visitasSyncCount > 0
-                        ? AppColors.estadoPendiente
-                        : AppColors.secondaryBlue,
-                    destacar: snap.visitasSyncCount > 0,
-                  ),
-                ),
-                Container(
-                  width: 1,
-                  height: 40,
-                  color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-                Expanded(
-                  child: _MetricCell(
+                  child: _EstadoPill(
                     icon: Icons.gps_fixed_rounded,
-                    label: 'GPS',
-                    value: snap.gpsLabel,
+                    label: gpsLabel,
                     color: gpsColor,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: AppColors.secondaryBlue.withValues(alpha: 0.15),
-                ),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () => setState(
+                () => _diagnosticoExpandido = !_diagnosticoExpandido,
               ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.route_rounded,
-                    size: 20,
-                    color: AppColors.secondaryBlue.withValues(alpha: 0.85),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Recorrido hoy',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    snap.kmLabel,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: AppColors.secondaryBlue,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (snap.deadLetterCount > 0) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryRed.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: AppColors.primaryRed.withValues(alpha: 0.35),
-                  ),
-                ),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.report_problem_outlined,
-                      size: 18,
-                      color: AppColors.primaryRed,
+                    Icon(
+                      Icons.settings_outlined,
+                      size: 20,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${snap.deadLetterCount} registro(s) no se pudieron enviar '
-                        'tras varios intentos. Revisa sincronización forzada.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: AppColors.primaryRed,
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                        ),
+                    Text(
+                      '⚙ Diagnóstico',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
                       ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _diagnosticoExpandido
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ],
                 ),
               ),
+            ),
+            if (_diagnosticoExpandido) ...[
+              const Divider(height: 1),
+              const SizedBox(height: 10),
+              _DiagRow(label: 'Último envío (heartbeat)', value: snap.ultimoEnvioLabel),
+              _DiagRow(label: 'Cola SQLite (operacional)', value: snap.colaSqliteLabel),
+              if (snap.pendientesColaTotal > snap.pendientesCola)
+                _DiagRow(
+                  label: 'Cola total (incl. telemetría)',
+                  value: '${snap.pendientesColaTotal}',
+                ),
+              _DiagRow(label: 'Visitas sync', value: snap.visitasSyncLabel),
+              if (snap.hayTelemetriaPendiente)
+                _DiagRow(
+                  label: 'Telemetría pendiente',
+                  value: snap.pendientesTelemetria == 1
+                      ? '1 en cola'
+                      : '${snap.pendientesTelemetria} en cola',
+                ),
+              _DiagRow(label: 'GPS detalle', value: snap.gpsLabel),
+              _DiagRow(label: 'Enlace', value: snap.enlaceLabel),
+              _DiagRow(label: 'Recorrido hoy', value: snap.kmLabel),
+              if (snap.deadLetterCount > 0)
+                _DiagRow(
+                  label: 'Dead letter',
+                  value: '${snap.deadLetterCount}',
+                  destacar: true,
+                ),
+              if (snap.sincronizando)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: enlaceColor,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Sincronizando en segundo plano…',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (kDebugMode && widget.onOpenOutboxDebug != null) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: widget.onOpenOutboxDebug,
+                  icon: const Icon(Icons.bug_report_outlined, size: 18),
+                  label: const Text('Abrir outbox (debug)'),
+                ),
+              ],
             ],
-            if (!snap.telemetriaActiva) ...[
-              const SizedBox(height: 8),
+            if (!snap.telemetriaActiva && !_diagnosticoExpandido) ...[
+              const SizedBox(height: 6),
               Text(
-                'Inicia la ruta para activar el seguimiento en terreno.',
+                'Inicia la ruta para activar seguimiento GPS.',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
-                  height: 1.3,
                 ),
               ),
             ],
@@ -230,6 +193,19 @@ class OperationalStatusCard extends StatelessWidget {
       ),
     );
   }
+
+  static String _enlaceLabelTerreno(OperacionalEnlaceEstado e) => switch (e) {
+        OperacionalEnlaceEstado.online => '🟢 En línea',
+        OperacionalEnlaceEstado.offline => '🔴 Sin conexión',
+        OperacionalEnlaceEstado.reintentando => '🟡 Reenviando',
+      };
+
+  static String _gpsLabelTerreno(OperacionalGpsEstado e) => switch (e) {
+        OperacionalGpsEstado.activo => '📍 GPS activo',
+        OperacionalGpsEstado.buscando => '📍 Buscando GPS…',
+        OperacionalGpsEstado.sinSenal => '📍 Sin señal',
+        OperacionalGpsEstado.inactivo => '📍 GPS inactivo',
+      };
 
   static Color _colorEnlace(OperacionalEnlaceEstado e) => switch (e) {
         OperacionalEnlaceEstado.online => AppColors.secondaryBlue,
@@ -252,24 +228,39 @@ class OperationalStatusCard extends StatelessWidget {
       };
 }
 
-class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.color});
+class _EstadoPill extends StatelessWidget {
+  const _EstadoPill({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
 
+  final IconData icon;
+  final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      width: 10,
-      height: 10,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.45),
-            blurRadius: 4,
-            spreadRadius: 0.5,
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
           ),
         ],
       ),
@@ -277,50 +268,44 @@ class _StatusDot extends StatelessWidget {
   }
 }
 
-class _MetricCell extends StatelessWidget {
-  const _MetricCell({
-    required this.icon,
+class _DiagRow extends StatelessWidget {
+  const _DiagRow({
     required this.label,
     required this.value,
-    required this.color,
     this.destacar = false,
   });
 
-  final IconData icon;
   final String label;
   final String value;
-  final Color color;
   final bool destacar;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Column(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: color.withValues(alpha: 0.9)),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurfaceVariant,
-              fontSize: 10,
+          Expanded(
+            flex: 3,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: destacar ? FontWeight.w900 : FontWeight.w800,
-              color: color,
+          Expanded(
+            flex: 2,
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: destacar ? AppColors.primaryRed : null,
+              ),
             ),
           ),
         ],

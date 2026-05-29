@@ -54,6 +54,28 @@ class GeorefService {
     }
   }
 
+  /// Contador KPI para Home: registros del GET (sin mezclar lista de ruta).
+  Future<int> loadPendientesCount({
+    required String vendedorId,
+    bool fetchRemote = true,
+  }) async {
+    final vid = vendedorId.trim();
+    final cached = await GeorefLocalStore.loadPendingCountCache(vid) ?? 0;
+    if (!fetchRemote) return cached;
+
+    try {
+      final reach = await api.checkReachability();
+      if (!reach.ok) return cached;
+      final remote = await api.getGeorefPendientes(vendedor: vid);
+      final count = remote.length;
+      await GeorefLocalStore.savePendingCountCache(vid, count);
+      return count;
+    } catch (e) {
+      fieldLog('Georef', 'KPI pendientes falló: $e');
+      return cached;
+    }
+  }
+
   /// Captura GPS → persistencia local → outbox → HTTP async si hay red.
   Future<GeorefCaptureResult> capturarUbicacion({
     required OperationalScope scope,

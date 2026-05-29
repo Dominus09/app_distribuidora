@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -22,6 +23,8 @@ import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../../../core/telemetry/telemetry_config.dart';
 import '../widgets/operational_status_listener.dart';
+import '../widgets/ruta_activa_card.dart';
+import '../widgets/ruta_progreso_card.dart';
 import '../widgets/terreno_sync_banner.dart';
 import '../../../core/telemetry/outbox_observability.dart';
 import '../../../core/telemetry/timer_registry.dart';
@@ -147,6 +150,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   int? _clientesVisitadosCierre;
   int? _clientesPendientesCierre;
   int _deadLetterCount = 0;
+  int? _georefPendientesKpi;
+  bool _georefKpiCargando = false;
   final _crashRecovery = CrashRecoveryService();
 
   @override
@@ -175,12 +180,14 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       onPeriodicVisitaSync: _syncPendientesSilencioso,
     );
     _rutaFuture = Future<List<Visita>>.value([]);
+    unawaited(_cargarKpiGeorefDesdeCache());
     unawaited(_inicializarSesionVendedor().then((_) {
       if (!mounted) return;
       _rutaFuture = _cargarRutaDesdeApi();
       _rutaFuture.then((list) {
         if (mounted) setState(() => _visitas = list);
       });
+      unawaited(_actualizarKpiGeoref());
     }));
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final previousOk = _connectivityOk;
@@ -342,6 +349,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     _visitas = [];
     _operationalScope = null;
     _rutaIdActiva = null;
+    _georefPendientesKpi = null;
     _routeStarted = false;
     _routeFinished = false;
     _porcentajeCumplimiento = null;
@@ -576,6 +584,41 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     _rutaFuture.then((list) {
       if (mounted) setState(() => _visitas = list);
     });
+    unawaited(_actualizarKpiGeoref());
+  }
+
+  Future<void> _cargarKpiGeorefDesdeCache() async {
+    final count = await _georefService.loadPendientesCount(
+      vendedorId: widget.vendedorCodigo,
+      fetchRemote: false,
+    );
+    if (!mounted) return;
+    setState(() => _georefPendientesKpi = count);
+  }
+
+  Future<void> _actualizarKpiGeoref({bool fetchRemote = true}) async {
+    if (!mounted) return;
+    setState(() => _georefKpiCargando = true);
+    final count = await _georefService.loadPendientesCount(
+      vendedorId: widget.vendedorCodigo,
+      fetchRemote: fetchRemote,
+    );
+    if (!mounted) return;
+    setState(() {
+      _georefPendientesKpi = count;
+      _georefKpiCargando = false;
+    });
+  }
+
+  static Color _colorGeorefPendientesKpi(int count) {
+    if (count <= 0) return const Color(0xFF2E7D32);
+    if (count <= 10) return AppColors.estadoPendiente;
+    return AppColors.primaryRed;
+  }
+
+  String get _georefPendientesKpiTexto {
+    if (_georefKpiCargando && _georefPendientesKpi == null) return '…';
+    return '${_georefPendientesKpi ?? 0}';
   }
 
   Future<void> _cerrarSesion() async {
@@ -602,6 +645,35 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   int get _clientesAtendidos =>
       _totalClientes -
       _visitas.where((v) => v.estado == VisitaEstado.pendiente).length;
+
+  Visita? get _proximaParada {
+    final pendientes = _visitas
+        .where((v) => v.estado == VisitaEstado.pendiente)
+        .toList()
+      ..sort((a, b) => a.orden.compareTo(b.orden));
+    return pendientes.isEmpty ? null : pendientes.first;
+  }
+
+  int get _indiceClienteActual {
+    if (_totalClientes <= 0) return 0;
+    final atendidos = _clientesAtendidos;
+    if (atendidos >= _totalClientes) return _totalClientes;
+    return atendidos + 1;
+  }
+
+  void _abrirOutboxDebug() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => OutboxDebugScreen(
+          telemetry: _telemetry,
+          vendedorId: widget.vendedorCodigo,
+          scope: _operationalScope ?? _scopeActual,
+          serverClientes: _visitas.length,
+          cacheClientes: _visitas.length,
+        ),
+      ),
+    );
+  }
 
   /// Fusiona actualizaciones por `id` y agrega paradas nuevas del servidor.
   static List<Visita> _mergeVisitasPorId(List<Visita> base, List<Visita> updates) {
@@ -755,9 +827,11 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         ),
       ),
     );
+    if (!mounted) return;
+    await _actualizarKpiGeoref();
   }
 
-  Future<void> _abrirRuta() async {
+  Future<void> _abrirRuta({RutaListaFiltro filtro = RutaListaFiltro.todos}) async {
     // Al abrir terreno: intento único de API si connectivity_plus falla (PDA / ethernet).
     if (!_attemptRemoteSave && !_forceOffline) {
       final o = await _apiService.checkReachability();
@@ -784,6 +858,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
           apiService: _apiService,
           operationalScope: _operationalScope ?? _scopeActual,
           georefService: _georefService,
+          filtroLista: filtro,
           onVisitasChanged: _setVisitas,
           reloadRuta: _cargarRutaDesdeApi,
           persistVisitaWriteAhead: _persistVisitaWriteAhead,
@@ -792,16 +867,79 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     );
   }
 
+  void _mostrarResumenDia() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            20 + MediaQuery.paddingOf(ctx).bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '📊 Resumen del día',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 16),
+              RutaProgresoCard(
+                atendidos: _clientesAtendidos,
+                total: _totalClientes,
+                visitados: _visitados,
+                incidencias: _incidencias,
+                pendientes: _pendientes,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ResumenDiaTile(
+                      valor: '$_pendientes',
+                      etiqueta: 'Pendientes',
+                      color: AppColors.estadoPendiente,
+                      icon: Icons.pending_actions_outlined,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ResumenDiaTile(
+                      valor: '$_visitados',
+                      etiqueta: 'Visitados',
+                      color: AppColors.secondaryBlue,
+                      icon: Icons.check_circle_outline,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ResumenDiaTile(
+                      valor: '$_incidencias',
+                      etiqueta: 'Incidencias',
+                      color: AppColors.primaryRed,
+                      icon: Icons.warning_amber_rounded,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   static final Uri _urlCatalogo = Uri.parse('https://cat.quillotana.cl');
   static final Uri _urlBsale =
       Uri.parse('https://app.bsale.cl/documents/sales');
-
-  static String _barraProgresoAscii(int hechos, int total) {
-    if (total <= 0) return '░' * 10;
-    const segmentos = 10;
-    final llenos = ((hechos * segmentos) / total).floor().clamp(0, segmentos);
-    return '${'█' * llenos}${'░' * (segmentos - llenos)}';
-  }
 
   Future<void> _abrirEnlaceExterno(Uri uri, String etiquetaError) async {
     try {
@@ -856,6 +994,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         '${r.pendingAfterCount} pendiente(s)',
       );
       _scheduleRefrescarEstadoOperacional();
+      unawaited(_actualizarKpiGeoref());
     } finally {
       if (mounted) {
         setState(() => _syncBusy = false);
@@ -957,6 +1096,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
           ],
         ),
       );
+      unawaited(_actualizarKpiGeoref());
     } finally {
       if (mounted) setState(() => _syncBusy = false);
     }
@@ -983,23 +1123,12 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         ),
         title: const Text('Inicio'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report_outlined),
-            tooltip: 'Debug outbox',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => OutboxDebugScreen(
-                    telemetry: _telemetry,
-                    vendedorId: widget.vendedorCodigo,
-                    scope: _operationalScope ?? _scopeActual,
-                    serverClientes: _visitas.length,
-                    cacheClientes: _visitas.length,
-                  ),
-                ),
-              );
-            },
-          ),
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.bug_report_outlined),
+              tooltip: 'Debug outbox',
+              onPressed: _abrirOutboxDebug,
+            ),
           TextButton(
             onPressed: _cerrarSesion,
             child: const Text('Cerrar sesión'),
@@ -1082,6 +1211,50 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if ((_georefPendientesKpi ?? 0) > 0) ...[
+                  const SizedBox(height: 14),
+                  Material(
+                    color: AppColors.estadoPendiente.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: _abrirGeorefPendientes,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.add_location_alt_outlined,
+                              color: _colorGeorefPendientesKpi(
+                                _georefPendientesKpi ?? 0,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '📍 Tienes $_georefPendientesKpi '
+                                '${(_georefPendientesKpi ?? 0) == 1 ? 'cliente' : 'clientes'} '
+                                'pendiente${(_georefPendientesKpi ?? 0) == 1 ? '' : 's'} '
+                                'de georreferenciar',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 Text(
                   'Estado en terreno',
@@ -1094,7 +1267,17 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                 const SizedBox(height: 10),
                 OperationalStatusListener(
                   snapshotListenable: _operacionalNotifier,
+                  onOpenOutboxDebug: _abrirOutboxDebug,
                 ),
+                if (_routeStarted && !_routeFinished) ...[
+                  const SizedBox(height: 16),
+                  RutaActivaCard(
+                    visible: true,
+                    clienteActual: _indiceClienteActual,
+                    totalClientes: _totalClientes,
+                    proximaParadaNombre: _proximaParada?.clienteNombre,
+                  ),
+                ],
                 const SizedBox(height: 28),
                 Text(
                   'Resumen del día',
@@ -1135,51 +1318,22 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     ),
                   ],
                 ),
-                const SizedBox(height: 28),
-                Text(
-                  'Progreso',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                    color: theme.colorScheme.secondary,
-                  ),
-                ),
                 const SizedBox(height: 10),
-                if (_totalClientes > 0) ...[
-                  Text(
-                    '[ ${_barraProgresoAscii(_clientesAtendidos, _totalClientes)} ]  $_clientesAtendidos / $_totalClientes',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontFamily: 'monospace',
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                      height: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: LinearProgressIndicator(
-                      minHeight: 12,
-                      value: _clientesAtendidos / _totalClientes,
-                      backgroundColor: theme.colorScheme.secondaryContainer,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Registrados en ruta (visitas e incidencias) frente al total del día.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      height: 1.35,
-                    ),
-                  ),
-                ] else
-                  Text(
-                    'Sin clientes cargados para hoy.',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+                _ResumenDiaTile(
+                  valor: _georefPendientesKpiTexto,
+                  etiqueta: '📍 Georef pendientes',
+                  color: _colorGeorefPendientesKpi(_georefPendientesKpi ?? 0),
+                  icon: Icons.add_location_alt_outlined,
+                  onTap: _abrirGeorefPendientes,
+                ),
+                const SizedBox(height: 28),
+                RutaProgresoCard(
+                  atendidos: _clientesAtendidos,
+                  total: _totalClientes,
+                  visitados: _visitados,
+                  incidencias: _incidencias,
+                  pendientes: _pendientes,
+                ),
                 const SizedBox(height: 32),
                 Text(
                   'Acciones',
@@ -1190,20 +1344,11 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: _abrirGeorefPendientes,
-                  icon: const Icon(Icons.add_location_alt_outlined),
-                  label: const Text('Clientes sin georreferencia'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 52),
-                  ),
-                ),
-                const SizedBox(height: 12),
                 if (!_routeStarted && !_routeFinished) ...[
                   FilledButton.icon(
                     onPressed: _iniciarRuta,
-                    icon: const Icon(Icons.play_arrow_rounded, size: 26),
-                    label: const Text('Iniciar ruta'),
+                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
+                    label: const Text('🚚 Iniciar ruta'),
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(double.infinity, 56),
                       textStyle: const TextStyle(
@@ -1214,9 +1359,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   ),
                 ] else if (_routeStarted && !_routeFinished) ...[
                   FilledButton.icon(
-                    onPressed: _abrirRuta,
-                    icon: const Icon(Icons.route_rounded, size: 26),
-                    label: const Text('Ver ruta'),
+                    onPressed: () => _abrirRuta(),
+                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
+                    label: const Text('🚚 Continuar ruta'),
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(double.infinity, 56),
                       textStyle: const TextStyle(
@@ -1297,7 +1442,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   ),
                   const SizedBox(height: 12),
                   FilledButton.icon(
-                    onPressed: _abrirRuta,
+                    onPressed: () => _abrirRuta(),
                     icon: const Icon(Icons.route_rounded, size: 26),
                     label: const Text('Ver ruta'),
                     style: FilledButton.styleFrom(
@@ -1309,46 +1454,58 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _syncBusy ? null : _sincronizacionForzada,
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 56),
-                    backgroundColor: theme.colorScheme.secondary,
-                    foregroundColor: theme.colorScheme.onSecondary,
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                if (_visitas.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Row(
                     children: [
-                      if (_syncBusy)
-                        SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: theme.colorScheme.onSecondary,
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _abrirRuta(),
+                          icon: const Icon(Icons.people_outline, size: 22),
+                          label: const Text('📋 Clientes'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 50),
+                            textStyle: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
                           ),
-                        )
-                      else
-                        Icon(
-                          Icons.sync_rounded,
-                          size: 26,
-                          color: theme.colorScheme.onSecondary,
                         ),
-                      const SizedBox(width: 10),
-                      Text(
-                        _syncBusy
-                            ? 'Sincronizando…'
-                            : 'Sincronización forzada',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: theme.colorScheme.onSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _abrirRuta(
+                            filtro: RutaListaFiltro.soloIncidencias,
+                          ),
+                          icon: const Icon(Icons.warning_amber_rounded, size: 22),
+                          label: const Text('⚠️ Incidencias'),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 50),
+                            foregroundColor: AppColors.primaryRed,
+                            textStyle: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                            ),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _mostrarResumenDia,
+                    icon: const Icon(Icons.bar_chart_rounded, size: 22),
+                    label: const Text('📊 Resumen'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 50),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 36),
                 Text(
                   'Herramientas',
@@ -1359,6 +1516,27 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   ),
                 ),
                 const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _syncBusy ? null : _sincronizacionForzada,
+                  icon: _syncBusy
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sync_rounded, size: 24),
+                  label: Text(
+                    _syncBusy ? 'Sincronizando…' : 'Sincronización forzada',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 52),
+                    textStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 OutlinedButton.icon(
                   onPressed: () =>
                       _abrirEnlaceExterno(_urlCatalogo, 'el catálogo'),
@@ -1440,55 +1618,64 @@ class _ResumenDiaTile extends StatelessWidget {
     required this.etiqueta,
     required this.color,
     required this.icon,
+    this.onTap,
   });
 
   final String valor;
   final String etiqueta;
   final Color color;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final child = Padding(
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 8),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              valor,
+              maxLines: 1,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w900,
+                color: color,
+                height: 1,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            etiqueta,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.15,
+            ),
+          ),
+        ],
+      ),
+    );
     return Material(
       color: AppColors.surface,
       elevation: 1,
       shadowColor: AppColors.secondaryBlue.withValues(alpha: 0.08),
       borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(height: 8),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                valor,
-                maxLines: 1,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: color,
-                  height: 1,
-                ),
-              ),
+      child: onTap == null
+          ? child
+          : InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: child,
             ),
-            const SizedBox(height: 6),
-            Text(
-              etiqueta,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.15,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

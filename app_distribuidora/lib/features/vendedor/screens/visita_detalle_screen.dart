@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/session/operational_scope.dart';
 import '../../../core/theme/app_colors.dart';
 import '../models/visita.dart';
-import '../utils/incidencia_photo.dart';
-import '../utils/maps_navigation.dart';
 import '../services/api_service.dart';
+import '../services/georef_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
+import '../utils/incidencia_photo.dart';
+import '../utils/maps_navigation.dart';
+import '../utils/phone_launcher.dart';
+import '../widgets/georef_cliente_banner.dart';
 import '../widgets/sync_status_chip.dart';
+import '../widgets/terreno_badges.dart';
 import '../widgets/visit_action_sheets.dart';
 
 /// Detalle del cliente antes de marcar visita o incidencia (vista principal en terreno).
@@ -21,8 +26,10 @@ class VisitaDetalleScreen extends StatefulWidget {
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
-    required this.apiService,
+    required     this.apiService,
     this.onGeorefDesdeIncidencia,
+    this.georefService,
+    this.operationalScope,
   });
 
   final Visita visita;
@@ -38,6 +45,8 @@ class VisitaDetalleScreen extends StatefulWidget {
     required double lon,
     String? observacion,
   })? onGeorefDesdeIncidencia;
+  final GeorefService? georefService;
+  final OperationalScope? operationalScope;
 
   @override
   State<VisitaDetalleScreen> createState() => _VisitaDetalleScreenState();
@@ -119,7 +128,6 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final v = _visita;
-    final estadoColor = Color(v.estado.toneColorValue);
     final puedeEditar = v.puedeEditarse;
 
     return PopScope(
@@ -138,6 +146,68 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
         body: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           children: [
+            if (widget.georefService != null &&
+                widget.operationalScope != null)
+              GeorefClienteBanner(
+                visita: _visita,
+                scope: widget.operationalScope!,
+                georefService: widget.georefService!,
+                locationService: widget.locationService,
+                interfaceConnectivityDetected:
+                    widget.interfaceConnectivityDetected,
+                attemptRemoteSave: widget.attemptRemoteSave,
+                onGeorefGuardada: (v) => setState(() => _visita = v),
+              ),
+            if (v.tieneTelefonoLlamable ||
+                visitaTieneCoordenadasCliente(v.latCliente, v.lonCliente)) ...[
+              Row(
+                children: [
+                  if (v.tieneTelefonoLlamable)
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: () => launchPhoneDialer(v.telefono!),
+                        icon: const Icon(Icons.phone_outlined, size: 22),
+                        label: const Text('📞 Llamar'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (v.tieneTelefonoLlamable &&
+                      visitaTieneCoordenadasCliente(
+                        v.latCliente,
+                        v.lonCliente,
+                      ))
+                    const SizedBox(width: 10),
+                  if (visitaTieneCoordenadasCliente(
+                    v.latCliente,
+                    v.lonCliente,
+                  ))
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: _ir,
+                        icon: const Icon(Icons.map_outlined, size: 22),
+                        label: const Text('🗺 Ver mapa'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                          backgroundColor: AppColors.secondaryBlue
+                              .withValues(alpha: 0.14),
+                          foregroundColor: AppColors.secondaryBlue,
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
             Text(
               'Datos del cliente',
               style: theme.textTheme.labelLarge?.copyWith(
@@ -182,29 +252,11 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: estadoColor.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: estadoColor.withValues(alpha: 0.45),
-                          ),
-                        ),
-                        child: Text(
-                          v.estado.label,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w900,
-                            color: estadoColor,
-                          ),
-                        ),
-                      ),
-                    ),
+                    TerrenoBadge(kind: badgeKindForVisitaEstado(v.estado)),
+                    if (v.syncStatus != SyncStatus.synced) ...[
+                      const SizedBox(height: 8),
+                      SyncStatusChip(visita: v),
+                    ],
                   ],
                 ),
               ),

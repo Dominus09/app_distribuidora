@@ -7,8 +7,9 @@ import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../utils/maps_navigation.dart';
-import 'cliente_sync_dot.dart';
+import '../utils/phone_launcher.dart';
 import 'sync_status_chip.dart';
+import 'terreno_badges.dart';
 import 'visit_action_sheets.dart';
 
 /// Tarjeta de parada en ruta con acciones rápidas (terreno).
@@ -166,69 +167,16 @@ class VisitaCard extends StatelessWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  visita.clienteNombre,
+                                  visita.clienteNombre.toUpperCase(),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 18,
-                                    height: 1.15,
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 19,
+                                    height: 1.12,
+                                    letterSpacing: 0.3,
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 6,
-                                  crossAxisAlignment:
-                                      WrapCrossAlignment.center,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 5,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: c.withValues(alpha: 0.16),
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: Text(
-                                        visita.estado.label,
-                                        style:
-                                            theme.textTheme.labelLarge?.copyWith(
-                                          color: c,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ),
-                                    if (visita.estado != VisitaEstado.pendiente)
-                                      ClienteSyncDot(visita: visita),
-                                  ],
-                                ),
-                                if (distanciaEtiqueta case final String d) ...[
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.near_me_outlined,
-                                        size: 18,
-                                        color:
-                                            theme.colorScheme.secondary,
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Flexible(
-                                        child: Text(
-                                          d,
-                                          style: theme.textTheme.labelLarge
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w800,
-                                                color: theme
-                                                    .colorScheme.secondary,
-                                              ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
                                 const SizedBox(height: 10),
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,80 +184,96 @@ class VisitaCard extends StatelessWidget {
                                     Icon(
                                       Icons.place_outlined,
                                       size: 22,
-                                      color: theme
-                                          .colorScheme.onSurfaceVariant,
+                                      color: theme.colorScheme.secondary,
                                     ),
                                     const SizedBox(width: 6),
                                     Expanded(
                                       child: Text(
                                         visita.direccion,
-                                        maxLines: 4,
+                                        maxLines: 3,
                                         overflow: TextOverflow.ellipsis,
-                                        style:
-                                            theme.textTheme.bodyLarge?.copyWith(
-                                          color: theme
-                                              .colorScheme.onSurfaceVariant,
+                                        style: theme.textTheme.bodyLarge?.copyWith(
+                                          fontWeight: FontWeight.w600,
                                           height: 1.25,
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
-                                if (visita.conCompra != null) ...[
+                                if (distanciaEtiqueta case final String d) ...[
                                   const SizedBox(height: 8),
-                                  Text(
-                                    visita.conCompra!
-                                        ? 'Con compra'
-                                        : 'Sin compra',
-                                    style: theme.textTheme.labelLarge
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                          color: theme.colorScheme.tertiary,
-                                        ),
-                                  ),
-                                ],
-                                if (visita.tipoIncidencia != null) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Incidencia: ${visita.tipoIncidencia!.label}',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.labelLarge?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.primaryRed,
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 8),
-                                SyncStatusChip(visita: visita),
-                                if (!puedeEditar) ...[
-                                  const SizedBox(height: 10),
                                   Row(
                                     children: [
                                       Icon(
-                                        Icons.lock_outline,
-                                        size: 18,
-                                        color: theme.colorScheme.outline,
+                                        Icons.straighten,
+                                        size: 20,
+                                        color: theme.colorScheme.secondary,
                                       ),
                                       const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(
-                                          'Ya registrado · toca para ver detalle',
-                                          style: theme.textTheme.bodyMedium
-                                              ?.copyWith(
-                                                fontWeight: FontWeight.w700,
-                                                color: theme.colorScheme
-                                                    .onSurfaceVariant,
-                                              ),
+                                      Text(
+                                        '📏 $d',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          color: theme.colorScheme.secondary,
                                         ),
                                       ),
                                     ],
                                   ),
-                                ] else ...[
-                                  const SizedBox(height: 4),
+                                ],
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Estado:',
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TerrenoBadge(
+                                  kind: badgeKindForVisitaEstado(visita.estado),
+                                ),
+                                if (visita.estado != VisitaEstado.pendiente) ...[
+                                  const SizedBox(height: 10),
                                   Text(
-                                    'Toca para ver ficha del cliente',
-                                    style: theme.textTheme.labelSmall?.copyWith(
+                                    'Última gestión:',
+                                    style: theme.textTheme.labelMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  if (visita.conCompra != null)
+                                    TerrenoBadge(
+                                      kind: visita.conCompra!
+                                          ? TerrenoBadgeKind.conCompra
+                                          : TerrenoBadgeKind.sinCompra,
+                                    ),
+                                  if (visita.tipoIncidencia != null) ...[
+                                    const SizedBox(height: 6),
+                                    TerrenoBadge(
+                                      kind: TerrenoBadgeKind.incidencia,
+                                    ),
+                                  ],
+                                  if (visita.syncStatus != SyncStatus.synced) ...[
+                                    const SizedBox(height: 6),
+                                    SyncStatusChip(visita: visita),
+                                  ] else if (visita.estado !=
+                                      VisitaEstado.pendiente) ...[
+                                    const SizedBox(height: 6),
+                                    const TerrenoBadge(
+                                      kind: TerrenoBadgeKind.sincronizado,
+                                    ),
+                                  ],
+                                ] else if (visita.syncStatus !=
+                                    SyncStatus.synced) ...[
+                                  const SizedBox(height: 8),
+                                  SyncStatusChip(visita: visita),
+                                ],
+                                if (!puedeEditar) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Toca la tarjeta para ver ficha',
+                                    style: theme.textTheme.labelMedium?.copyWith(
                                       color: theme.colorScheme.primary,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -317,59 +281,6 @@ class VisitaCard extends StatelessWidget {
                                 ],
                               ],
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          const Spacer(),
-                          Tooltip(
-                            message: visitaTieneCoordenadasCliente(
-                                  visita.latCliente,
-                                  visita.lonCliente,
-                                )
-                                ? 'Abrir mapa de ruta'
-                                : 'Sin coordenadas para el mapa',
-                            child: TextButton(
-                              onPressed:
-                                  visitaTieneCoordenadasCliente(
-                                    visita.latCliente,
-                                    visita.lonCliente,
-                                  )
-                                  ? onMapFocus
-                                  : null,
-                              style: TextButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                visualDensity: VisualDensity.compact,
-                              ),
-                              child: Text(
-                                'Ver mapa',
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: 'Ver ficha',
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsetsDirectional.only(
-                              start: 4,
-                              end: 4,
-                              top: 6,
-                              bottom: 6,
-                            ),
-                            iconSize: 24,
-                            onPressed: onTapDetalle,
-                            icon:
-                                const Icon(Icons.description_outlined),
                           ),
                         ],
                       ),
@@ -381,65 +292,127 @@ class VisitaCard extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+            child: Column(
               children: [
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: puedeEditar
-                        ? () => _openVisitado(context)
-                        : null,
-                    icon: const Icon(Icons.check_circle_outline, size: 20),
-                    label: const Text('Visitar'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      backgroundColor: theme.colorScheme.secondaryContainer,
-                      foregroundColor: theme.colorScheme.secondary,
-                      textStyle: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: puedeEditar
-                        ? () => _openIncidencia(context)
-                        : null,
-                    icon: const Icon(Icons.warning_amber_rounded, size: 20),
-                    label: const Text('Incidencia'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      backgroundColor: AppColors.primaryRed.withValues(alpha: 0.12),
-                      foregroundColor: AppColors.primaryRed,
-                      textStyle: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                IconButton.filledTonal(
-                  tooltip: 'Ir',
-                  onPressed:
-                      visitaTieneCoordenadasCliente(
+                if (visita.tieneTelefonoLlamable ||
+                    visitaTieneCoordenadasCliente(
+                      visita.latCliente,
+                      visita.lonCliente,
+                    )) ...[
+                  Row(
+                    children: [
+                      if (visita.tieneTelefonoLlamable)
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: () =>
+                                launchPhoneDialer(visita.telefono!),
+                            icon: const Icon(Icons.phone_outlined, size: 22),
+                            label: const Text('📞 Llamar'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 50),
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (visita.tieneTelefonoLlamable &&
+                          visitaTieneCoordenadasCliente(
+                            visita.latCliente,
+                            visita.lonCliente,
+                          ))
+                        const SizedBox(width: 8),
+                      if (visitaTieneCoordenadasCliente(
                         visita.latCliente,
                         visita.lonCliente,
-                      )
-                      ? () => _openDirections(context)
-                      : null,
-                  icon: const Icon(Icons.directions_outlined, size: 20),
-                  style: IconButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.all(8),
-                    minimumSize: const Size(40, 40),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ))
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: onMapFocus,
+                            icon: const Icon(Icons.map_outlined, size: 22),
+                            label: const Text('🗺 Ver mapa'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 50),
+                              backgroundColor: AppColors.secondaryBlue
+                                  .withValues(alpha: 0.14),
+                              foregroundColor: AppColors.secondaryBlue,
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
+                  const SizedBox(height: 10),
+                ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: puedeEditar
+                            ? () => _openVisitado(context)
+                            : null,
+                        icon: const Icon(Icons.check_circle_outline, size: 22),
+                        label: const Text('✅ Visitar'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: puedeEditar
+                            ? () => _openIncidencia(context)
+                            : null,
+                        icon: const Icon(Icons.warning_amber_rounded, size: 22),
+                        label: const Text('⚠️ Incidencia'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                          backgroundColor:
+                              AppColors.primaryRed.withValues(alpha: 0.12),
+                          foregroundColor: AppColors.primaryRed,
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: visitaTieneCoordenadasCliente(
+                          visita.latCliente,
+                          visita.lonCliente,
+                        )
+                            ? () => _openDirections(context)
+                            : null,
+                        icon: const Icon(Icons.directions_outlined),
+                        label: const Text('Ir'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filledTonal(
+                      tooltip: 'Ver ficha',
+                      onPressed: onTapDetalle,
+                      icon: const Icon(Icons.description_outlined),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -9,9 +9,11 @@ class OperationalStatusListener extends StatelessWidget {
   const OperationalStatusListener({
     super.key,
     required this.snapshotListenable,
+    this.onOpenOutboxDebug,
   });
 
   final ValueListenable<OperationalStatusSnapshot?> snapshotListenable;
+  final VoidCallback? onOpenOutboxDebug;
 
   @override
   Widget build(BuildContext context) {
@@ -21,6 +23,7 @@ class OperationalStatusListener extends StatelessWidget {
         return OperationalStatusCard(
           snapshot: snap,
           isLoading: snap == null,
+          onOpenOutboxDebug: kDebugMode ? onOpenOutboxDebug : null,
         );
       },
     );
