@@ -52,26 +52,43 @@ class GeorefLocalStore {
     lista[idx] = lista[idx].copyWith(
       latEfectiva: lat,
       lonEfectiva: lon,
+      latOperacional: lat,
+      lonOperacional: lon,
       georefEstado: GeorefEstado.aplicada,
       localSyncStatus: GeorefSyncStatus.synced,
     );
     await save(scope, lista);
   }
 
-  /// KPI Home: `georef_pending_count__<vendedor>` (solo contador del GET).
-  static String pendingCountKeyFor(String vendedorId) =>
-      'georef_pending_count__${vendedorId.trim()}';
+  /// KPI Home: `georef_pending_count__<vendedor>__<fecha_operativa>`.
+  static String pendingCountKeyFor(OperationalScope scope) =>
+      'georef_pending_count__${scope.vendedorIdTrimmed}__${scope.fechaOperativa}';
 
-  static Future<int?> loadPendingCountCache(String vendedorId) async {
+  static Future<int?> loadPendingCountCache(OperationalScope scope) async {
     final prefs = await SharedPreferences.getInstance();
-    final key = pendingCountKeyFor(vendedorId);
+    final key = pendingCountKeyFor(scope);
     if (!prefs.containsKey(key)) return null;
     return prefs.getInt(key);
   }
 
-  static Future<void> savePendingCountCache(String vendedorId, int count) async {
+  static Future<void> savePendingCountCache(
+    OperationalScope scope,
+    int count,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(pendingCountKeyFor(vendedorId), count);
+    await prefs.setInt(pendingCountKeyFor(scope), count);
+  }
+
+  /// Elimina claves KPI antiguas sin fecha (evita 155 de otro contexto).
+  static Future<void> purgeLegacyPendingCountCaches() async {
+    final prefs = await SharedPreferences.getInstance();
+    final legacy = prefs.getKeys().where((k) {
+      if (!k.startsWith('georef_pending_count__')) return false;
+      return k.split('__').length == 2;
+    });
+    for (final k in legacy) {
+      await prefs.remove(k);
+    }
   }
 
   /// Fusiona servidor con cambios locales pendientes (no pierde capturas offline).

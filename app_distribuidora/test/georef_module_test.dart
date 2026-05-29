@@ -7,7 +7,9 @@ import 'package:app_distribuidora/features/vendedor/models/georef_origen.dart';
 import 'package:app_distribuidora/features/vendedor/models/georef_pendiente.dart';
 import 'package:app_distribuidora/features/vendedor/models/visita.dart';
 import 'package:app_distribuidora/features/vendedor/services/address_geocoder.dart';
+import 'package:app_distribuidora/core/session/operational_scope.dart';
 import 'package:app_distribuidora/features/vendedor/services/georef_local_store.dart';
+import 'package:app_distribuidora/features/vendedor/utils/georef_pendiente_filter.dart';
 
 void main() {
   group('CoordenadasEfectivas', () {
@@ -103,6 +105,71 @@ void main() {
       expect(
         observacionErrorGeorefParaSync('Cliente movido de local'),
         'Error georreferencia: nueva ubicación capturada. Cliente movido de local',
+      );
+    });
+  });
+
+  group('filtrarGeorefPendientesEfectivos', () {
+    test('excluye cliente con lat/lon BSALE (réplica) sin operacional', () {
+      final items = [
+        GeorefPendiente.fromJson({
+          'ruta_id': 1,
+          'cliente_id': 'c1',
+          'cliente_nombre': 'Con BSALE',
+          'direccion': 'Dir',
+          'lat': -33.45,
+          'lon': -70.66,
+          'georef_estado': 'pendiente',
+        }),
+        GeorefPendiente.fromJson({
+          'ruta_id': 2,
+          'cliente_id': 'c2',
+          'cliente_nombre': 'Sin coords',
+          'direccion': 'Dir 2',
+          'georef_estado': 'pendiente',
+        }),
+      ];
+      final filtrados = filtrarGeorefPendientesEfectivos(items);
+      expect(filtrados.length, 1);
+      expect(filtrados.single.clienteId, 'c2');
+    });
+
+    test('incluye solo sin COALESCE operacional/réplica', () {
+      final items = [
+        GeorefPendiente.fromJson({
+          'ruta_id': 3,
+          'cliente_id': 'c3',
+          'cliente_nombre': 'Operacional',
+          'direccion': 'Dir',
+          'lat_operacional': -33.1,
+          'lon_operacional': -70.6,
+          'georef_estado': 'aplicada',
+        }),
+      ];
+      expect(filtrarGeorefPendientesEfectivos(items), isEmpty);
+    });
+
+    test('deduplica por ruta_id + cliente_id', () {
+      final dup = GeorefPendiente.fromJson({
+        'ruta_id': 5,
+        'cliente_id': 'c5',
+        'cliente_nombre': 'Dup',
+        'direccion': 'Dir',
+        'georef_estado': 'pendiente',
+      });
+      expect(filtrarGeorefPendientesEfectivos([dup, dup]).length, 1);
+    });
+  });
+
+  group('GeorefLocalStore.pendingCountKeyFor', () {
+    test('incluye vendedor y fecha operativa', () {
+      const scope = OperationalScope(
+        vendedorId: '3',
+        fechaOperativa: '2026-05-27',
+      );
+      expect(
+        GeorefLocalStore.pendingCountKeyFor(scope),
+        'georef_pending_count__3__2026-05-27',
       );
     });
   });

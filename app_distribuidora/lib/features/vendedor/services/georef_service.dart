@@ -8,9 +8,23 @@ import '../models/georef_estado.dart';
 import '../models/georef_origen.dart';
 import '../models/georef_pendiente.dart';
 import '../models/visita.dart';
+import '../utils/georef_pendiente_filter.dart';
 import 'api_service.dart';
 import 'georef_local_store.dart';
 import 'vendedor_service.dart';
+
+/// Resultado del KPI Home (misma fuente que pantalla pendientes).
+class GeorefKpiSnapshot {
+  const GeorefKpiSnapshot({
+    this.count,
+    this.fromCache = false,
+  });
+
+  final int? count;
+  final bool fromCache;
+
+  bool get hasValue => count != null;
+}
 
 /// Captura y sync de georreferencias operacionales (write-local-first + outbox).
 class GeorefService {
@@ -23,6 +37,8 @@ class GeorefService {
   })  : _store = localStore ?? GeorefLocalStore(),
         _onEnqueuedForSync = onEnqueuedForSync;
 
+  static const kpiEndpoint = 'operaciones/georef-pendientes';
+
   final ApiService api;
   final VendedorService vendedorService;
   final OutboxQueueService queue;
@@ -33,47 +49,104 @@ class GeorefService {
     required OperationalScope scope,
     bool fetchRemote = true,
   }) async {
-    final local = await _store.load(scope);
-    if (!fetchRemote) return local;
+    final snapshot = await _resolverPendientes(
+      scope: scope,
+      fetchRemote: fetchRemote,
+      persistListCache: fetchRemote,
+    );
+    return snapshot.items;
+  }
+
+  /// KPI Home: misma lista filtrada que [loadPendientes] (vendedor + georef efectiva nula).
+  Future<GeorefKpiSnapshot> loadPendientesKpi({
+    required OperationalScope scope,
+    bool fetchRemote = true,
+  }) async {
+    final cacheKey = GeorefLocalStore.pendingCountKeyFor(scope);
+    if (!fetchRemote) {
+      final cached = await GeorefLocalStore.loadPendingCountCache(scope);
+      georefKpiLog(
+        'vendedor=${scope.vendedorIdTrimmed} '
+        'fecha=${scope.fechaOperativa} '
+        'endpoint=$kpiEndpoint '
+        'items_recibidos=n/a '
+        'count_final=${cached ?? 'null'} '
+        'cache_key=$cacheKey '
+        'from_cache=true',
+      );
+      return GeorefKpiSnapshot(count: cached, fromCache: true);
+    }
 
     try {
-      final reach = await api.checkReachability();
-      if (!reach.ok) return local;
-      final remote = await api.getGeorefPendientes(
-        vendedor: scope.vendedorIdTrimmed,
+      final snapshot = await _resolverPendientes(
+        scope: scope,
+        fetchRemote: true,
+        persistListCache: true,
       );
-      final merged = GeorefLocalStore.mergeServidorConLocal(
-        servidor: remote,
-        local: local,
+      final count = snapshot.items.length;
+      await GeorefLocalStore.savePendingCountCache(scope, count);
+      georefKpiLog(
+        'vendedor=${scope.vendedorIdTrimmed} '
+        'fecha=${scope.fechaOperativa} '
+        'endpoint=$kpiEndpoint '
+        'items_recibidos=${snapshot.rawRemoteCount} '
+        'count_final=$count '
+        'cache_key=$cacheKey '
+        'from_cache=false',
       );
-      await _store.save(scope, merged);
-      return merged;
+      return GeorefKpiSnapshot(count: count, fromCache: false);
     } catch (e) {
-      fieldLog('Georef', 'GET pendientes falló: $e');
-      return local;
+      fieldLog('Georef', 'KPI pendientes falló: $e');
+      final cached = await GeorefLocalStore.loadPendingCountCache(scope);
+      georefKpiLog(
+        'vendedor=${scope.vendedorIdTrimmed} '
+        'fecha=${scope.fechaOperativa} '
+        'endpoint=$kpiEndpoint '
+        'items_recibidos=error '
+        'count_final=${cached ?? 'null'} '
+        'cache_key=$cacheKey '
+        'from_cache=${cached != null}',
+      );
+      return GeorefKpiSnapshot(count: cached, fromCache: cached != null);
     }
   }
 
-  /// Contador KPI para Home: registros del GET (sin mezclar lista de ruta).
-  Future<int> loadPendientesCount({
-    required String vendedorId,
-    bool fetchRemote = true,
+  Future<_PendientesResueltos> _resolverPendientes({
+    required OperationalScope scope,
+    required bool fetchRemote,
+    required bool persistListCache,
   }) async {
-    final vid = vendedorId.trim();
-    final cached = await GeorefLocalStore.loadPendingCountCache(vid) ?? 0;
-    if (!fetchRemote) return cached;
-
-    try {
-      final reach = await api.checkReachability();
-      if (!reach.ok) return cached;
-      final remote = await api.getGeorefPendientes(vendedor: vid);
-      final count = remote.length;
-      await GeorefLocalStore.savePendingCountCache(vid, count);
-      return count;
-    } catch (e) {
-      fieldLog('Georef', 'KPI pendientes falló: $e');
-      return cached;
+    final local = await _store.load(scope);
+    if (!fetchRemote) {
+      return _PendientesResueltos(
+        items: filtrarGeorefPendientesEfectivos(local),
+        rawRemoteCount: 0,
+      );
     }
+
+    final reach = await api.checkReachability();
+    if (!reach.ok) {
+      return _PendientesResueltos(
+        items: filtrarGeorefPendientesEfectivos(local),
+        rawRemoteCount: 0,
+      );
+    }
+
+    final remote = await api.getGeorefPendientes(
+      vendedor: scope.vendedorIdTrimmed,
+    );
+    final merged = GeorefLocalStore.mergeServidorConLocal(
+      servidor: remote,
+      local: local,
+    );
+    final filtrados = filtrarGeorefPendientesEfectivos(merged);
+    if (persistListCache) {
+      await _store.save(scope, filtrados);
+    }
+    return _PendientesResueltos(
+      items: filtrados,
+      rawRemoteCount: remote.length,
+    );
   }
 
   /// Captura GPS → persistencia local → outbox → HTTP async si hay red.
@@ -91,6 +164,8 @@ class GeorefService {
     final actualizado = item.copyWith(
       latEfectiva: lat,
       lonEfectiva: lon,
+      latOperacional: lat,
+      lonOperacional: lon,
       georefEstado: GeorefEstado.capturada,
       georefOrigen: origen,
       localSyncStatus: GeorefSyncStatus.pendingSync,
@@ -105,7 +180,7 @@ class GeorefService {
     } else {
       lista.add(actualizado);
     }
-    await _store.save(scope, lista);
+    await _store.save(scope, filtrarGeorefPendientesEfectivos(lista));
 
     if (visitasActuales != null) {
       await _actualizarVisitasConGeoref(
@@ -157,6 +232,16 @@ class GeorefService {
     if (!changed) return;
     await vendedorService.persistVisitasToDisk(scope, next);
   }
+}
+
+class _PendientesResueltos {
+  const _PendientesResueltos({
+    required this.items,
+    required this.rawRemoteCount,
+  });
+
+  final List<GeorefPendiente> items;
+  final int rawRemoteCount;
 }
 
 class GeorefCaptureResult {

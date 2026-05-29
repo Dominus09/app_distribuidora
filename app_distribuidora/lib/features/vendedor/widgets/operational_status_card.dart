@@ -104,7 +104,7 @@ class _OperationalStatusCardState extends State<OperationalStatusCard> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      '⚙ Diagnóstico',
+                      'Diagnóstico',
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -195,16 +195,16 @@ class _OperationalStatusCardState extends State<OperationalStatusCard> {
   }
 
   static String _enlaceLabelTerreno(OperacionalEnlaceEstado e) => switch (e) {
-        OperacionalEnlaceEstado.online => '🟢 En línea',
-        OperacionalEnlaceEstado.offline => '🔴 Sin conexión',
-        OperacionalEnlaceEstado.reintentando => '🟡 Reenviando',
+        OperacionalEnlaceEstado.online => 'En línea',
+        OperacionalEnlaceEstado.offline => 'Sin conexión',
+        OperacionalEnlaceEstado.reintentando => 'Reenviando',
       };
 
   static String _gpsLabelTerreno(OperacionalGpsEstado e) => switch (e) {
-        OperacionalGpsEstado.activo => '📍 GPS activo',
-        OperacionalGpsEstado.buscando => '📍 Buscando GPS…',
-        OperacionalGpsEstado.sinSenal => '📍 Sin señal',
-        OperacionalGpsEstado.inactivo => '📍 GPS inactivo',
+        OperacionalGpsEstado.activo => 'GPS activo',
+        OperacionalGpsEstado.buscando => 'Buscando GPS…',
+        OperacionalGpsEstado.sinSenal => 'Sin señal',
+        OperacionalGpsEstado.inactivo => 'GPS inactivo',
       };
 
   static Color _colorEnlace(OperacionalEnlaceEstado e) => switch (e) {

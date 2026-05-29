@@ -167,7 +167,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
                       child: FilledButton.tonalIcon(
                         onPressed: () => launchPhoneDialer(v.telefono!),
                         icon: const Icon(Icons.phone_outlined, size: 22),
-                        label: const Text('📞 Llamar'),
+                        label: const Text('Llamar'),
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(0, 52),
                           textStyle: const TextStyle(
@@ -191,7 +191,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
                       child: FilledButton.tonalIcon(
                         onPressed: _ir,
                         icon: const Icon(Icons.map_outlined, size: 22),
-                        label: const Text('🗺 Ver mapa'),
+                        label: const Text('Ver mapa'),
                         style: FilledButton.styleFrom(
                           minimumSize: const Size(0, 52),
                           backgroundColor: AppColors.secondaryBlue

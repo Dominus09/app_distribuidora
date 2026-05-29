@@ -16,6 +16,10 @@ class GeorefPendiente {
     this.ruteroId,
     required this.latEfectiva,
     required this.lonEfectiva,
+    this.latOperacional,
+    this.lonOperacional,
+    this.latReplica,
+    this.lonReplica,
     required this.georefEstado,
     this.georefOrigen,
     this.localSyncStatus = GeorefSyncStatus.synced,
@@ -32,6 +36,10 @@ class GeorefPendiente {
   final int? ruteroId;
   final double latEfectiva;
   final double lonEfectiva;
+  final double? latOperacional;
+  final double? lonOperacional;
+  final double? latReplica;
+  final double? lonReplica;
   final GeorefEstado georefEstado;
   final GeorefOrigen? georefOrigen;
   final GeorefSyncStatus localSyncStatus;
@@ -57,8 +65,11 @@ class GeorefPendiente {
     );
   }
 
-  bool get tieneCoordenadasEfectivas =>
-      latEfectiva.abs() > 1e-9 || lonEfectiva.abs() > 1e-9;
+  bool get tieneCoordenadasEfectivas {
+    final lat = latOperacional ?? latReplica ?? latEfectiva;
+    final lon = lonOperacional ?? lonReplica ?? lonEfectiva;
+    return visitaTieneCoordenadasCliente(lat, lon);
+  }
 
   String get estadoUiLabel {
     if (localSyncStatus == GeorefSyncStatus.pendingSync ||
@@ -74,8 +85,12 @@ class GeorefPendiente {
   }
 
   factory GeorefPendiente.fromJson(Map<String, dynamic> json) {
-    final lat = CoordenadasEfectivas.latFromJson(json) ?? 0;
-    final lon = CoordenadasEfectivas.lonFromJson(json) ?? 0;
+    final latOp = CoordenadasEfectivas.parseCoord(json['lat_operacional']);
+    final lonOp = CoordenadasEfectivas.parseCoord(json['lon_operacional']);
+    final latRep = CoordenadasEfectivas.parseCoord(json['lat']);
+    final lonRep = CoordenadasEfectivas.parseCoord(json['lon']);
+    final lat = latOp ?? latRep ?? CoordenadasEfectivas.latFromJson(json) ?? 0;
+    final lon = lonOp ?? lonRep ?? CoordenadasEfectivas.lonFromJson(json) ?? 0;
     return GeorefPendiente(
       rutaId: _int(json['ruta_id']) ?? 0,
       clienteId: (json['cliente_id'] ?? json['id'] ?? '').toString(),
@@ -90,6 +105,10 @@ class GeorefPendiente {
       ruteroId: _int(json['rutero_id']),
       latEfectiva: lat,
       lonEfectiva: lon,
+      latOperacional: latOp,
+      lonOperacional: lonOp,
+      latReplica: latRep,
+      lonReplica: lonRep,
       georefEstado: parseGeorefEstado(json['georef_estado']?.toString()),
       georefOrigen: parseGeorefOrigen(json['georef_origen']?.toString()),
       localSyncStatus: _parseLocalSync(json['local_sync_status']?.toString()),
@@ -125,6 +144,10 @@ class GeorefPendiente {
     int? ruteroId,
     double? latEfectiva,
     double? lonEfectiva,
+    double? latOperacional,
+    double? lonOperacional,
+    double? latReplica,
+    double? lonReplica,
     GeorefEstado? georefEstado,
     GeorefOrigen? georefOrigen,
     GeorefSyncStatus? localSyncStatus,
@@ -141,6 +164,10 @@ class GeorefPendiente {
       ruteroId: ruteroId ?? this.ruteroId,
       latEfectiva: latEfectiva ?? this.latEfectiva,
       lonEfectiva: lonEfectiva ?? this.lonEfectiva,
+      latOperacional: latOperacional ?? this.latOperacional,
+      lonOperacional: lonOperacional ?? this.lonOperacional,
+      latReplica: latReplica ?? this.latReplica,
+      lonReplica: lonReplica ?? this.lonReplica,
       georefEstado: georefEstado ?? this.georefEstado,
       georefOrigen: georefOrigen ?? this.georefOrigen,
       localSyncStatus: localSyncStatus ?? this.localSyncStatus,

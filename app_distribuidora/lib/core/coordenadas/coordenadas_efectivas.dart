@@ -34,6 +34,9 @@ abstract final class CoordenadasEfectivas {
     return null;
   }
 
+  /// Parsea un campo JSON de lat/lon (operacional, réplica BSALE, etc.).
+  static double? parseCoord(dynamic v) => _parseCoord(v);
+
   static double? _parseCoord(dynamic v) {
     if (v == null) return null;
     if (v is double) return v;

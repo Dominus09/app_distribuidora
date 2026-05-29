@@ -15,7 +15,7 @@ import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
 import '../utils/maps_navigation.dart';
 import '../utils/ruta_distancia_tarjeta.dart';
-import '../widgets/terreno_sync_banner.dart';
+import '../widgets/terreno_enlace_chip.dart';
 import '../widgets/visita_card.dart';
 import 'ruta_mapa_screen.dart';
 import 'visita_detalle_screen.dart';
@@ -557,16 +557,7 @@ class _RutaScreenState extends State<RutaScreen> {
           ],
         ),
         actions: [
-          TextButton.icon(
-            onPressed: () => _abrirMapa(),
-            icon: const Icon(Icons.map_outlined),
-            label: const Text('Ver mapa'),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          TerrenoSyncBanner(
+          TerrenoEnlaceChip(
             canSyncWithServer: widget.attemptRemoteSave,
             interfaceConnectivityDetected:
                 widget.interfaceConnectivityDetected,
@@ -574,8 +565,14 @@ class _RutaScreenState extends State<RutaScreen> {
                 _visitas.any((v) => v.syncStatus == SyncStatus.syncing),
             batchSyncing: false,
           ),
-          Expanded(
-            child: RefreshIndicator(
+          TextButton.icon(
+            onPressed: () => _abrirMapa(),
+            icon: const Icon(Icons.map_outlined),
+            label: const Text('Ver mapa'),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
               onRefresh: () async {
                 final loader = widget.reloadRuta;
                 if (loader == null) return;
@@ -637,9 +634,6 @@ class _RutaScreenState extends State<RutaScreen> {
                   ..._sliversListaOrdenada(context),
                 ],
               ),
-            ),
-          ),
-        ],
       ),
     );
   }

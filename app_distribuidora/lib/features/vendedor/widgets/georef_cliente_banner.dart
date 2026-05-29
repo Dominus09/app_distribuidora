@@ -11,7 +11,7 @@ import '../models/visita.dart';
 import '../screens/georef_mapa_screen.dart';
 import '../services/georef_service.dart';
 import '../services/location_service.dart';
-import '../utils/maps_navigation.dart';
+import '../utils/georef_pendiente_filter.dart';
 import 'visit_action_sheets.dart';
 
 /// Banner y acciones rápidas cuando el cliente no tiene georef efectiva.
@@ -36,7 +36,7 @@ class GeorefClienteBanner extends StatelessWidget {
   final ValueChanged<Visita>? onGeorefGuardada;
 
   bool get _sinGeoref =>
-      !visitaTieneCoordenadasCliente(visita.latEfectiva, visita.lonEfectiva);
+      georefPendienteRequiereCaptura(GeorefPendiente.fromVisita(visita));
 
   @override
   Widget build(BuildContext context) {

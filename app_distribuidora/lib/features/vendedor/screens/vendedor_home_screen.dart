@@ -25,7 +25,8 @@ import '../../../core/telemetry/telemetry_config.dart';
 import '../widgets/operational_status_listener.dart';
 import '../widgets/ruta_activa_card.dart';
 import '../widgets/ruta_progreso_card.dart';
-import '../widgets/terreno_sync_banner.dart';
+import '../widgets/terreno_enlace_chip.dart';
+import '../services/georef_local_store.dart';
 import '../../../core/telemetry/outbox_observability.dart';
 import '../../../core/telemetry/timer_registry.dart';
 import 'georef_pendientes_screen.dart';
@@ -180,6 +181,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       onPeriodicVisitaSync: _syncPendientesSilencioso,
     );
     _rutaFuture = Future<List<Visita>>.value([]);
+    unawaited(GeorefLocalStore.purgeLegacyPendingCountCaches());
     unawaited(_cargarKpiGeorefDesdeCache());
     unawaited(_inicializarSesionVendedor().then((_) {
       if (!mounted) return;
@@ -350,6 +352,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     _operationalScope = null;
     _rutaIdActiva = null;
     _georefPendientesKpi = null;
+    _georefKpiCargando = false;
     _routeStarted = false;
     _routeFinished = false;
     _porcentajeCumplimiento = null;
@@ -588,24 +591,26 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   }
 
   Future<void> _cargarKpiGeorefDesdeCache() async {
-    final count = await _georefService.loadPendientesCount(
-      vendedorId: widget.vendedorCodigo,
+    final snap = await _georefService.loadPendientesKpi(
+      scope: _operationalScope ?? _scopeActual,
       fetchRemote: false,
     );
     if (!mounted) return;
-    setState(() => _georefPendientesKpi = count);
+    setState(() {
+      _georefPendientesKpi = snap.count;
+    });
   }
 
   Future<void> _actualizarKpiGeoref({bool fetchRemote = true}) async {
     if (!mounted) return;
     setState(() => _georefKpiCargando = true);
-    final count = await _georefService.loadPendientesCount(
-      vendedorId: widget.vendedorCodigo,
+    final snap = await _georefService.loadPendientesKpi(
+      scope: _operationalScope ?? _scopeActual,
       fetchRemote: fetchRemote,
     );
     if (!mounted) return;
     setState(() {
-      _georefPendientesKpi = count;
+      _georefPendientesKpi = snap.count;
       _georefKpiCargando = false;
     });
   }
@@ -618,8 +623,12 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
 
   String get _georefPendientesKpiTexto {
     if (_georefKpiCargando && _georefPendientesKpi == null) return '…';
-    return '${_georefPendientesKpi ?? 0}';
+    if (_georefPendientesKpi == null) return '—';
+    return '$_georefPendientesKpi';
   }
+
+  bool get _mostrarRecordatorioGeoref =>
+      _georefPendientesKpi != null && _georefPendientesKpi! > 0;
 
   Future<void> _cerrarSesion() async {
     _telemetry.stop();
@@ -1123,6 +1132,14 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         ),
         title: const Text('Inicio'),
         actions: [
+          TerrenoEnlaceChip(
+            canSyncWithServer: _attemptRemoteSave,
+            interfaceConnectivityDetected: _connectivityOk,
+            anyItemSyncing: _visitas.any(
+              (v) => v.syncStatus == SyncStatus.syncing,
+            ),
+            batchSyncing: _syncBusy,
+          ),
           if (kDebugMode)
             IconButton(
               icon: const Icon(Icons.bug_report_outlined),
@@ -1211,46 +1228,90 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                if ((_georefPendientesKpi ?? 0) > 0) ...[
-                  const SizedBox(height: 14),
-                  Material(
-                    color: AppColors.estadoPendiente.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      onTap: _abrirGeorefPendientes,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.add_location_alt_outlined,
-                              color: _colorGeorefPendientesKpi(
-                                _georefPendientesKpi ?? 0,
+                if (_mostrarRecordatorioGeoref) ...[
+                  const SizedBox(height: 10),
+                  InkWell(
+                    onTap: _abrirGeorefPendientes,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '📍 Tienes $_georefPendientesKpi '
+                              '${_georefPendientesKpi == 1 ? 'cliente' : 'clientes'} '
+                              'pendiente${_georefPendientesKpi == 1 ? '' : 's'} '
+                              'de georreferenciar',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: theme.colorScheme.onSurfaceVariant,
+                                height: 1.3,
                               ),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                '📍 Tienes $_georefPendientesKpi '
-                                '${(_georefPendientesKpi ?? 0) == 1 ? 'cliente' : 'clientes'} '
-                                'pendiente${(_georefPendientesKpi ?? 0) == 1 ? '' : 's'} '
-                                'de georreferenciar',
-                                style: theme.textTheme.bodyLarge?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.25,
-                                ),
-                              ),
-                            ),
-                            Icon(
-                              Icons.chevron_right_rounded,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ],
-                        ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 22,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                if (!_routeStarted && !_routeFinished) ...[
+                  FilledButton.icon(
+                    onPressed: _iniciarRuta,
+                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
+                    label: const Text('Iniciar ruta'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 56),
+                      textStyle: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ] else if (_routeStarted && !_routeFinished) ...[
+                  FilledButton.icon(
+                    onPressed: () => _abrirRuta(),
+                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
+                    label: const Text('Continuar ruta'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 56),
+                      textStyle: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _solicitarFinalizarRuta,
+                    icon: const Icon(Icons.flag_rounded),
+                    label: const Text('Finalizar ruta'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      foregroundColor: AppColors.primaryRed,
+                      side: const BorderSide(
+                        color: AppColors.primaryRed,
+                        width: 1.5,
+                      ),
+                      backgroundColor: AppColors.surface,
+                    ),
+                  ),
+                ] else ...[
+                  FilledButton.icon(
+                    onPressed: () => _abrirRuta(),
+                    icon: const Icon(Icons.route_rounded, size: 26),
+                    label: const Text('Ver ruta'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 56),
+                      textStyle: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
@@ -1298,7 +1359,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                         icon: Icons.pending_actions_outlined,
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: _ResumenDiaTile(
                         valor: '$_visitados',
@@ -1307,7 +1368,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                         icon: Icons.check_circle_outline,
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: _ResumenDiaTile(
                         valor: '$_incidencias',
@@ -1316,15 +1377,19 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                         icon: Icons.warning_amber_rounded,
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ResumenDiaTile(
+                        valor: _georefPendientesKpiTexto,
+                        etiqueta: 'Georef pend.',
+                        color: _colorGeorefPendientesKpi(
+                          _georefPendientesKpi ?? 0,
+                        ),
+                        icon: Icons.add_location_alt_outlined,
+                        onTap: _abrirGeorefPendientes,
+                      ),
+                    ),
                   ],
-                ),
-                const SizedBox(height: 10),
-                _ResumenDiaTile(
-                  valor: _georefPendientesKpiTexto,
-                  etiqueta: '📍 Georef pendientes',
-                  color: _colorGeorefPendientesKpi(_georefPendientesKpi ?? 0),
-                  icon: Icons.add_location_alt_outlined,
-                  onTap: _abrirGeorefPendientes,
                 ),
                 const SizedBox(height: 28),
                 RutaProgresoCard(
@@ -1343,96 +1408,50 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     color: theme.colorScheme.secondary,
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (!_routeStarted && !_routeFinished) ...[
-                  FilledButton.icon(
-                    onPressed: _iniciarRuta,
-                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
-                    label: const Text('🚚 Iniciar ruta'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 56),
-                      textStyle: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ] else if (_routeStarted && !_routeFinished) ...[
-                  FilledButton.icon(
-                    onPressed: () => _abrirRuta(),
-                    icon: const Icon(Icons.local_shipping_outlined, size: 26),
-                    label: const Text('🚚 Continuar ruta'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 56),
-                      textStyle: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
+                if (_routeFinished) ...[
                   const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _solicitarFinalizarRuta,
-                    icon: const Icon(Icons.flag_rounded),
-                    label: const Text('Finalizar ruta'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 52),
-                      foregroundColor: AppColors.primaryRed,
-                      side: const BorderSide(color: AppColors.primaryRed, width: 1.5),
-                      backgroundColor: AppColors.surface,
-                    ),
-                  ),
-                ] else ...[
                   Card(
-                    elevation: 2,
+                    elevation: 0,
                     color: AppColors.surface,
-                    surfaceTintColor: Colors.transparent,
-                    shadowColor: AppColors.secondaryBlue.withValues(alpha: 0.1),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(14),
                       side: BorderSide(
                         color: AppColors.secondaryBlue.withValues(alpha: 0.2),
                       ),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.all(18),
+                      padding: const EdgeInsets.all(14),
                       child: Row(
                         children: [
                           Icon(
                             Icons.task_alt_rounded,
                             color: theme.colorScheme.primary,
-                            size: 36,
+                            size: 28,
                           ),
-                          const SizedBox(width: 14),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Ruta finalizada',
-                                  style: theme.textTheme.titleMedium?.copyWith(
+                                  _porcentajeCumplimiento != null
+                                      ? 'Ruta finalizada · '
+                                          '${_porcentajeCumplimiento!.toStringAsFixed(1)}% cumplimiento'
+                                      : 'Ruta finalizada',
+                                  style: theme.textTheme.bodyLarge?.copyWith(
                                     fontWeight: FontWeight.w800,
                                   ),
                                 ),
-                                if (_porcentajeCumplimiento != null) ...[
-                                  const SizedBox(height: 6),
+                                if (_clientesVisitadosCierre != null &&
+                                    _clientesPendientesCierre != null)
                                   Text(
-                                    'Cumplimiento: ${_porcentajeCumplimiento!.toStringAsFixed(1)}%',
-                                    style: theme.textTheme.bodyLarge?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                      color: theme.colorScheme.primary,
+                                    '$_clientesVisitadosCierre atendidos · '
+                                    '$_clientesPendientesCierre pendientes',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color:
+                                          theme.colorScheme.onSurfaceVariant,
                                     ),
                                   ),
-                                  if (_clientesVisitadosCierre != null &&
-                                      _clientesPendientesCierre != null)
-                                    Text(
-                                      'Al cierre: $_clientesVisitadosCierre atendidos · '
-                                      '$_clientesPendientesCierre pendientes',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                ],
                               ],
                             ),
                           ),
@@ -1440,21 +1459,9 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: () => _abrirRuta(),
-                    icon: const Icon(Icons.route_rounded, size: 26),
-                    label: const Text('Ver ruta'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 56),
-                      textStyle: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
                 ],
                 if (_visitas.isNotEmpty) ...[
+                  const SizedBox(height: 12),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1462,7 +1469,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                         child: OutlinedButton.icon(
                           onPressed: () => _abrirRuta(),
                           icon: const Icon(Icons.people_outline, size: 22),
-                          label: const Text('📋 Clientes'),
+                          label: const Text('Clientes'),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 50),
                             textStyle: const TextStyle(
@@ -1479,7 +1486,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                             filtro: RutaListaFiltro.soloIncidencias,
                           ),
                           icon: const Icon(Icons.warning_amber_rounded, size: 22),
-                          label: const Text('⚠️ Incidencias'),
+                          label: const Text('Incidencias'),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 50),
                             foregroundColor: AppColors.primaryRed,
@@ -1496,7 +1503,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                   OutlinedButton.icon(
                     onPressed: _mostrarResumenDia,
                     icon: const Icon(Icons.bar_chart_rounded, size: 22),
-                    label: const Text('📊 Resumen'),
+                    label: const Text('Resumen'),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 50),
                       textStyle: const TextStyle(
@@ -1567,20 +1574,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
             ),
           );
           }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TerrenoSyncBanner(
-                canSyncWithServer: _attemptRemoteSave,
-                interfaceConnectivityDetected: _connectivityOk,
-                anyItemSyncing: _visitas.any(
-                  (v) => v.syncStatus == SyncStatus.syncing,
-                ),
-                batchSyncing: _syncBusy,
-              ),
-              Expanded(child: bodyContent),
-            ],
-          );
+          return bodyContent;
         },
       ),
     );
