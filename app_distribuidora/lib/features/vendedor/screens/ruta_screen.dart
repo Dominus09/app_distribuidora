@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/session/operational_scope.dart';
 import '../../../core/network/api_timeouts.dart';
 import '../../../core/ux/offline_ux.dart';
 import '../../../core/utils/field_log.dart';
+import '../models/georef_pendiente.dart';
+import '../services/georef_service.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
@@ -34,10 +37,14 @@ class RutaScreen extends StatefulWidget {
     required this.apiService,
     this.reloadRuta,
     this.persistVisitaWriteAhead,
+    this.operationalScope,
+    this.georefService,
   });
 
   final List<Visita> visitas;
   final ValueChanged<List<Visita>> onVisitasChanged;
+  final OperationalScope? operationalScope;
+  final GeorefService? georefService;
   /// Persiste en disco + outbox antes de sync HTTP (write-ahead).
   final Future<List<Visita>> Function(
     Visita updated,
@@ -224,6 +231,31 @@ class _RutaScreenState extends State<RutaScreen> {
     }
   }
 
+  Future<void> _capturarGeorefDesdeIncidencia({
+    required Visita visita,
+    required double lat,
+    required double lon,
+    String? observacion,
+  }) async {
+    final scope = widget.operationalScope;
+    final svc = widget.georefService;
+    if (scope == null || svc == null) return;
+    final omitirHttp = OfflineUx.debeOmitirHttp(
+      interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
+      attemptRemoteSave: widget.attemptRemoteSave,
+      forceOffline: false,
+    );
+    await svc.capturarUbicacion(
+      scope: scope,
+      item: GeorefPendiente.fromVisita(visita),
+      lat: lat,
+      lon: lon,
+      observacion: observacion,
+      visitasActuales: _visitas,
+      omitirHttp: omitirHttp,
+    );
+  }
+
   Future<void> _sincronizarEnSegundoPlano(String visitaId) async {
     if (OfflineUx.debeOmitirHttp(
       interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
@@ -375,6 +407,7 @@ class _RutaScreenState extends State<RutaScreen> {
           interfaceConnectivityDetected: widget.interfaceConnectivityDetected,
           onVisitadoPressed: _reemplazarVisitaPorId,
           onIncidenciaPressed: _reemplazarVisitaPorId,
+          onGeorefDesdeIncidencia: _capturarGeorefDesdeIncidencia,
           onMapFocus: () => _centrarClienteEnMapa(visita),
           distanciaEtiqueta: _textoDistancia(visita),
           onTapDetalle: () async {
@@ -389,6 +422,7 @@ class _RutaScreenState extends State<RutaScreen> {
                   vendedorService: widget.vendedorService,
                   syncService: widget.syncService,
                   apiService: widget.apiService,
+                  onGeorefDesdeIncidencia: _capturarGeorefDesdeIncidencia,
                 ),
               ),
             );

@@ -16,6 +16,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/field_log.dart';
 import '../models/visita.dart';
 import '../services/api_service.dart';
+import '../services/georef_service.dart';
 import '../services/location_service.dart';
 import '../services/sync_service.dart';
 import '../services/vendedor_service.dart';
@@ -24,6 +25,7 @@ import '../widgets/operational_status_listener.dart';
 import '../widgets/terreno_sync_banner.dart';
 import '../../../core/telemetry/outbox_observability.dart';
 import '../../../core/telemetry/timer_registry.dart';
+import 'georef_pendientes_screen.dart';
 import 'outbox_debug_screen.dart';
 import 'ruta_screen.dart';
 
@@ -62,6 +64,7 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
   late final ApiService _apiService;
   late final DistribuidoraAuthService _authService;
   late final OperationalTelemetryService _telemetry;
+  late final GeorefService _georefService;
 
   late Future<List<Visita>> _rutaFuture;
 
@@ -160,6 +163,12 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
       vendedorId: widget.vendedorCodigo,
       api: _apiService,
       locationService: _locationService,
+    );
+    _georefService = GeorefService(
+      api: _apiService,
+      vendedorService: _vendedorService,
+      queue: _telemetry.queueForRecovery,
+      onEnqueuedForSync: () => _telemetry.flushOutboxBackground(),
     );
     _telemetry.bindVisitasContext(
       pendingVisitasCount: () => _visitasPendientesSync,
@@ -733,6 +742,21 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
     );
   }
 
+  Future<void> _abrirGeorefPendientes() async {
+    final scope = _operationalScope ?? _scopeActual;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => GeorefPendientesScreen(
+          scope: scope,
+          georefService: _georefService,
+          locationService: _locationService,
+          interfaceConnectivityDetected: _connectivityOk,
+          attemptRemoteSave: _attemptRemoteSave,
+        ),
+      ),
+    );
+  }
+
   Future<void> _abrirRuta() async {
     // Al abrir terreno: intento único de API si connectivity_plus falla (PDA / ethernet).
     if (!_attemptRemoteSave && !_forceOffline) {
@@ -758,6 +782,8 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
           vendedorService: _vendedorService,
           syncService: _syncService,
           apiService: _apiService,
+          operationalScope: _operationalScope ?? _scopeActual,
+          georefService: _georefService,
           onVisitasChanged: _setVisitas,
           reloadRuta: _cargarRutaDesdeApi,
           persistVisitaWriteAhead: _persistVisitaWriteAhead,
@@ -1161,6 +1187,15 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.6,
                     color: theme.colorScheme.secondary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _abrirGeorefPendientes,
+                  icon: const Icon(Icons.add_location_alt_outlined),
+                  label: const Text('Clientes sin georreferencia'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 52),
                   ),
                 ),
                 const SizedBox(height: 12),

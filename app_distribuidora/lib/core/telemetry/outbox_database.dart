@@ -1021,6 +1021,19 @@ class OutboxDiagnostics {
     }
     return m;
   }
+
+  /// Pendientes que afectan operación de visitas/georef (excluye telemetría secundaria).
+  int get pendingOperacionalCount {
+    const secondary = {'heartbeat', 'gps_track'};
+    const activeStates = {'pending', 'failed', 'syncing'};
+    return byTypeAndState
+        .where(
+          (r) =>
+              !secondary.contains(r.itemType) &&
+              activeStates.contains(r.syncState),
+        )
+        .fold(0, (sum, r) => sum + r.count);
+  }
 }
 
 class OutboxTypeStateCount {

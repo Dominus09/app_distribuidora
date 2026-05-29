@@ -2,7 +2,8 @@
 enum OutboxItemType {
   heartbeat('heartbeat'),
   gpsTrack('gps_track'),
-  visitaSync('visita_sync');
+  visitaSync('visita_sync'),
+  georefUpdate('georef_update');
 
   const OutboxItemType(this.value);
   final String value;

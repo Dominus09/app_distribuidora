@@ -230,7 +230,7 @@ class OperationalTelemetryService {
       enlace = OperacionalEnlaceEstado.offline;
     } else if (sincronizando ||
         _queue.isFlushing ||
-        (diag.pendingCount > 0 && puedeEnviarAlServidor)) {
+        (diag.pendingOperacionalCount > 0 && puedeEnviarAlServidor)) {
       enlace = OperacionalEnlaceEstado.reintentando;
     } else if (enRuta && ultimoHb != null) {
       final age = DateTime.now().difference(ultimoHb);
@@ -246,7 +246,8 @@ class OperationalTelemetryService {
     return OperationalStatusSnapshot(
       enlace: enlace,
       gps: gpsEstado,
-      pendientesCola: diag.pendingCount,
+      pendientesCola: diag.pendingOperacionalCount,
+      pendientesColaTotal: diag.pendingCount,
       visitasPendientes: visitasPendientes,
       visitasSyncPendientes: visitasPendientes,
       deadLetterCount: diag.deadLetterCount,

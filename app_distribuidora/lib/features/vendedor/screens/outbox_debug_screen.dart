@@ -117,6 +117,7 @@ class _OutboxDebugScreenState extends State<OutboxDebugScreen> {
                   _typeRow('heartbeat', _countForType(d!, OutboxItemType.heartbeat.value)),
                   _typeRow('gps_track', _countForType(d, OutboxItemType.gpsTrack.value)),
                   _typeRow('visita_sync', _countForType(d, OutboxItemType.visitaSync.value)),
+                  _typeRow('georef_update', _countForType(d, OutboxItemType.georefUpdate.value)),
                 ]),
                 _section('Timers activos', [
                   if (TimerRegistry.instance.snapshot().isEmpty)

@@ -1,3 +1,4 @@
+import '../../../core/coordenadas/coordenadas_efectivas.dart';
 import '../../../core/config/terreno_config.dart';
 
 // Modelo de dominio de una parada de ruta (API + almacenamiento local).
@@ -36,6 +37,9 @@ enum TipoIncidencia {
 
   /// Contacto remoto; sin validación GPS, evidencia obligatoria.
   atencionTelefonica,
+
+  /// Coordenadas erróneas: captura georef operacional en terreno.
+  errorGeorreferencia,
 }
 
 extension VisitaEstadoUi on VisitaEstado {
@@ -163,17 +167,25 @@ extension TipoIncidenciaUi on TipoIncidencia {
     TipoIncidencia.fueraDeRuta => 'Fuera de ruta',
     TipoIncidencia.otros => 'Otros',
     TipoIncidencia.atencionTelefonica => 'Atención telefónica',
+    TipoIncidencia.errorGeorreferencia => 'Error georreferencia',
   };
 
   /// FastAPI enum en `VisitaCreate`: textos con espacio, no snake_case.
   String get apiValue => switch (this) {
-    TipoIncidencia.localCerrado => 'local cerrado',
-    TipoIncidencia.sinStock => 'sin stock',
-    TipoIncidencia.noCompra => 'no compra',
-    TipoIncidencia.fueraDeRuta => 'fuera de ruta',
-    TipoIncidencia.otros => 'otros',
-    TipoIncidencia.atencionTelefonica => 'atencion telefonica',
-  };
+        TipoIncidencia.localCerrado => 'local cerrado',
+        TipoIncidencia.sinStock => 'sin stock',
+        TipoIncidencia.noCompra => 'no compra',
+        TipoIncidencia.fueraDeRuta => 'fuera de ruta',
+        TipoIncidencia.otros => 'otros',
+        TipoIncidencia.atencionTelefonica => 'atencion telefonica',
+        TipoIncidencia.errorGeorreferencia => 'error georreferencia',
+      };
+
+  /// Valor enviado al backend en POST /visitas (puede diferir del label UI).
+  String get apiValueForSync => switch (this) {
+        TipoIncidencia.errorGeorreferencia => 'otros',
+        _ => apiValue,
+      };
 }
 
 class Visita {
@@ -242,8 +254,11 @@ class Visita {
   final TipoIncidencia? tipoIncidencia;
   final String? observacion;
   final bool? conCompra;
+  /// Coordenadas efectivas del cliente (API: COALESCE operacional, réplica).
   final double latCliente;
   final double lonCliente;
+  double get latEfectiva => latCliente;
+  double get lonEfectiva => lonCliente;
   final double? latVisita;
   final double? lonVisita;
   final DateTime? fechaHoraVisita;
@@ -339,8 +354,8 @@ class Visita {
       diaOperativo: _parseDiaOperativo(json),
       orden: _parseInt(json['orden_ruta']) ?? _parseInt(json['orden']) ?? 0,
       estado: _parseEstado(_str(json, 'estado')),
-      latCliente: _parseCoord(json['lat_cliente']) ?? 0,
-      lonCliente: _parseCoord(json['lon_cliente']) ?? 0,
+      latCliente: CoordenadasEfectivas.latOrZero(json),
+      lonCliente: CoordenadasEfectivas.lonOrZero(json),
       tipoIncidencia: _parseTipoIncidencia(_normTipoIncidenciaRaw(json)),
       observacion: _str(json, 'observacion'),
       conCompra: _parseBool(json['con_compra']),
@@ -370,7 +385,8 @@ class Visita {
       if (diaOperativo != null) 'dia_operativo': diaOperativo,
       'orden_ruta': orden,
       'estado': estado.apiValue,
-      if (tipoIncidencia != null) 'tipo_incidencia': tipoIncidencia!.apiValue,
+      if (tipoIncidencia != null)
+        'tipo_incidencia': tipoIncidencia!.apiValue,
       if (observacion != null) 'observacion': observacion,
       if (conCompra != null) 'con_compra': conCompra,
       'lat_cliente': latCliente,
@@ -431,9 +447,11 @@ class Visita {
     };
 
     if (tipoIncidencia != null) {
-      out['tipo_incidencia'] = tipoIncidencia!.apiValue;
+      out['tipo_incidencia'] = tipoIncidencia!.apiValueForSync;
     }
-    if (observacion != null && observacion!.trim().isNotEmpty) {
+    if (tipoIncidencia == TipoIncidencia.errorGeorreferencia) {
+      out['observacion'] = observacionErrorGeorefParaSync(observacion);
+    } else if (observacion != null && observacion!.trim().isNotEmpty) {
       out['observacion'] = observacion!.trim();
     }
     if (conCompra != null) {
@@ -664,6 +682,16 @@ SyncStatus _parseSyncStatus(String? s) {
   return SyncStatus.synced;
 }
 
+/// Texto de observación al sincronizar incidencia «Error georreferencia» como «otros».
+String observacionErrorGeorefParaSync(String? detalleUsuario) {
+  const prefix = 'Error georreferencia: nueva ubicación capturada';
+  final t = detalleUsuario?.trim();
+  if (t == null || t.isEmpty) return prefix;
+  final lower = t.toLowerCase();
+  if (lower.startsWith('error georreferencia')) return t;
+  return '$prefix. $t';
+}
+
 TipoIncidencia? _parseTipoIncidencia(String? s) {
   if (s == null || s.isEmpty) return null;
   switch (s) {
@@ -680,6 +708,9 @@ TipoIncidencia? _parseTipoIncidencia(String? s) {
     case 'atencion telefonica':
     case 'atención telefonica':
       return TipoIncidencia.atencionTelefonica;
+    case 'error georreferencia':
+    case 'error_georreferencia':
+      return TipoIncidencia.errorGeorreferencia;
     default:
       return null;
   }

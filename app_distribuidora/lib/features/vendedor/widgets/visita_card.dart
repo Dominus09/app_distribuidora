@@ -27,6 +27,7 @@ class VisitaCard extends StatelessWidget {
     required this.onTapDetalle,
     required this.onMapFocus,
     this.distanciaEtiqueta,
+    this.onGeorefDesdeIncidencia,
   });
 
   final Visita visita;
@@ -38,6 +39,12 @@ class VisitaCard extends StatelessWidget {
   final ApiService apiService;
   final ValueChanged<Visita> onVisitadoPressed;
   final ValueChanged<Visita> onIncidenciaPressed;
+  final Future<void> Function({
+    required Visita visita,
+    required double lat,
+    required double lon,
+    String? observacion,
+  })? onGeorefDesdeIncidencia;
   final VoidCallback onTapDetalle;
   final VoidCallback onMapFocus;
 
@@ -93,6 +100,7 @@ class VisitaCard extends StatelessWidget {
       locationService: locationService,
       vendedorService: vendedorService,
       syncService: syncService,
+      onGeorefDesdeIncidencia: onGeorefDesdeIncidencia,
     );
     if (result != null) onIncidenciaPressed(result);
   }

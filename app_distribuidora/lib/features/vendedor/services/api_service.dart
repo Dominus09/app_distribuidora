@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../core/config/api_config.dart';
 import '../../../core/network/api_timeouts.dart';
+import '../models/georef_pendiente.dart';
 import '../models/visita.dart';
 import 'visitas_api_payload.dart';
 
@@ -107,6 +108,21 @@ class ApiReachabilityOutcome {
           : 'Error al comprobar el servidor: $s',
     );
   }
+}
+
+/// ACK de POST georef operacional.
+class GeorefUpdateAck {
+  const GeorefUpdateAck({
+    required this.confirmed,
+    this.georefEstado,
+    this.lat,
+    this.lon,
+  });
+
+  final bool confirmed;
+  final String? georefEstado;
+  final double? lat;
+  final double? lon;
 }
 
 /// ACK de telemetría (`POST /operaciones/heartbeat` o `/operaciones/gps_track`).
@@ -371,6 +387,97 @@ class ApiService {
   /// POST `/operaciones/gps_track` — puntos GPS para km recorridos.
   Future<TelemetryAck> postGpsTrack(Map<String, dynamic> payload) async {
     return _postTelemetryAck('operaciones/gps_track', payload);
+  }
+
+  /// GET `/operaciones/georef-pendientes` — clientes sin georef operacional.
+  Future<List<GeorefPendiente>> getGeorefPendientes({
+    required String vendedor,
+  }) async {
+    final query = <String, String>{'vendedor': vendedor.trim()};
+
+    final uri = _uri('operaciones/georef-pendientes', query);
+    final resp = await _client
+        .get(uri, headers: {'Accept': 'application/json'})
+        .timeout(_kGetRutaTimeout);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw ApiHttpException(resp.statusCode, resp.body);
+    }
+    final decoded = jsonDecode(resp.body);
+    final rows = _extractGeorefList(decoded);
+    return rows
+        .map((e) => GeorefPendiente.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  /// POST `/operaciones/georef-actualizar` — persiste lat/lon operacional.
+  Future<GeorefUpdateAck> postGeorefActualizar(
+    Map<String, dynamic> payload,
+  ) async {
+    final uri = _uri('operaciones/georef-actualizar');
+    final resp = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(_kPostVisitaTimeout);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw ApiHttpException(resp.statusCode, resp.body);
+    }
+    if (resp.body.isEmpty) {
+      return const GeorefUpdateAck(confirmed: true);
+    }
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(resp.body);
+    } on FormatException {
+      return const GeorefUpdateAck(confirmed: true);
+    }
+    if (decoded is! Map) {
+      return const GeorefUpdateAck(confirmed: true);
+    }
+    final m = Map<String, dynamic>.from(decoded);
+    final ack = m['ack'] ?? m['confirmed'] ?? m['ok'];
+    final confirmed = ack == true ||
+        ack == 1 ||
+        (ack is String && ack.toLowerCase() == 'true');
+    return GeorefUpdateAck(
+      confirmed: confirmed || resp.statusCode == 200,
+      georefEstado: m['georef_estado']?.toString(),
+      lat: _parseDouble(m['lat'] ?? m['lat_operacional']),
+      lon: _parseDouble(m['lon'] ?? m['lon_operacional']),
+    );
+  }
+
+  static List<Map<String, dynamic>> _extractGeorefList(dynamic decoded) {
+    if (decoded is List) {
+      return decoded
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    if (decoded is Map) {
+      for (final key in ['items', 'pendientes', 'clientes', 'data']) {
+        final v = decoded[key];
+        if (v is List) {
+          return v
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+    }
+    return [];
+  }
+
+  static double? _parseDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is double) return v;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
   }
 
   Future<TelemetryAck> _postTelemetryAck(

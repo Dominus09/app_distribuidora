@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import '../../features/vendedor/models/georef_pendiente.dart';
 import '../../features/vendedor/models/visita.dart';
 import '../../features/vendedor/services/api_service.dart';
 import '../session/operational_scope.dart';
+import '../../features/vendedor/services/georef_local_store.dart';
 import '../network/api_timeouts.dart';
 import '../sync/outbox_sync_state.dart';
 import '../sync/processed_action_record.dart';
@@ -251,6 +253,40 @@ class OutboxQueueService {
             httpStatus: e.statusCode,
           );
         }
+      case OutboxItemType.georefUpdate:
+        try {
+          final ack = await api
+              .postGeorefActualizar(row.payload)
+              .timeout(TelemetryConfig.telemetryHttpTimeout);
+          if (ack.confirmed && _scope != null) {
+            final cid = row.payload['cliente_id']?.toString() ?? '';
+            final rid = (row.payload['ruta_id'] as num?)?.toInt() ??
+                _scope!.rutaId ??
+                0;
+            final lat = (row.payload['lat'] as num?)?.toDouble() ??
+                ack.lat ??
+                0;
+            final lon = (row.payload['lon'] as num?)?.toDouble() ??
+                ack.lon ??
+                0;
+            if (cid.isNotEmpty && rid >= 1) {
+              await GeorefLocalStore().applyServerAck(
+                scope: _scope!,
+                clienteId: cid,
+                rutaId: rid,
+                lat: lat,
+                lon: lon,
+              );
+            }
+          }
+          return _DispatchResult(success: ack.confirmed);
+        } on ApiHttpException catch (e) {
+          return _DispatchResult(
+            success: false,
+            error: 'HTTP ${e.statusCode}: ${e.body}',
+            httpStatus: e.statusCode,
+          );
+        }
     }
   }
 
@@ -331,6 +367,35 @@ class OutboxQueueService {
       rutaId: visita.rutaId ?? _scope?.rutaId,
       actionId: lid,
       endpoint: 'visitas',
+      source: source,
+      stackSnippet: stack,
+    );
+  }
+
+  Future<void> enqueueGeorefUpdate(
+    GeorefPendiente item, {
+    required String vendedorId,
+    required double lat,
+    required double lon,
+    required String source,
+  }) async {
+    final stack = OutboxObservability.captureCallerStack();
+    final lid = item.localActionId;
+    if (lid == null || lid.isEmpty) return;
+    final payload = item.toApiUpdatePayload(
+      vendedorId: vendedorId,
+      lat: lat,
+      lon: lon,
+    );
+    await _db.enqueue(
+      vendedorId: vendedorId,
+      type: OutboxItemType.georefUpdate,
+      payload: payload,
+      idempotencyKey: 'georef_$lid',
+      fechaOperativa: _scope?.fechaOperativa,
+      rutaId: item.rutaId,
+      actionId: lid,
+      endpoint: 'operaciones/georef-actualizar',
       source: source,
       stackSnippet: stack,
     );

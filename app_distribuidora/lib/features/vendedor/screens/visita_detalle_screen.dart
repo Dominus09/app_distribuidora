@@ -22,6 +22,7 @@ class VisitaDetalleScreen extends StatefulWidget {
     required this.vendedorService,
     required this.syncService,
     required this.apiService,
+    this.onGeorefDesdeIncidencia,
   });
 
   final Visita visita;
@@ -31,6 +32,12 @@ class VisitaDetalleScreen extends StatefulWidget {
   final VendedorService vendedorService;
   final SyncService syncService;
   final ApiService apiService;
+  final Future<void> Function({
+    required Visita visita,
+    required double lat,
+    required double lon,
+    String? observacion,
+  })? onGeorefDesdeIncidencia;
 
   @override
   State<VisitaDetalleScreen> createState() => _VisitaDetalleScreenState();
@@ -97,6 +104,7 @@ class _VisitaDetalleScreenState extends State<VisitaDetalleScreen> {
       locationService: widget.locationService,
       vendedorService: widget.vendedorService,
       syncService: widget.syncService,
+      onGeorefDesdeIncidencia: widget.onGeorefDesdeIncidencia,
     );
     if (r != null) setState(() => _visita = r);
   }

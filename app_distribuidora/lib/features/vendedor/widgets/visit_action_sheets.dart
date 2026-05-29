@@ -452,6 +452,12 @@ Future<Visita?> showIncidenciaFlowSheet({
   required LocationService locationService,
   required VendedorService vendedorService,
   required SyncService syncService,
+  Future<void> Function({
+    required Visita visita,
+    required double lat,
+    required double lon,
+    String? observacion,
+  })? onGeorefDesdeIncidencia,
 }) {
   return showModalBottomSheet<Visita>(
     context: context,
@@ -474,6 +480,7 @@ Future<Visita?> showIncidenciaFlowSheet({
           locationService: locationService,
           vendedorService: vendedorService,
           syncService: syncService,
+          onGeorefDesdeIncidencia: onGeorefDesdeIncidencia,
         ),
       );
     },
@@ -489,6 +496,7 @@ class _IncidenciaSheetBody extends StatefulWidget {
     required this.locationService,
     required this.vendedorService,
     required this.syncService,
+    this.onGeorefDesdeIncidencia,
   });
 
   final Visita visita;
@@ -498,6 +506,12 @@ class _IncidenciaSheetBody extends StatefulWidget {
   final LocationService locationService;
   final VendedorService vendedorService;
   final SyncService syncService;
+  final Future<void> Function({
+    required Visita visita,
+    required double lat,
+    required double lon,
+    String? observacion,
+  })? onGeorefDesdeIncidencia;
 
   @override
   State<_IncidenciaSheetBody> createState() => _IncidenciaSheetBodyState();
@@ -548,9 +562,14 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
     setState(() => _validationError = null);
 
     final obsTrim = _obsCtrl.text.trim();
-    final observacion = obsTrim.isEmpty ? null : obsTrim;
+    final esErrorGeoref = _tipo == TipoIncidencia.errorGeorreferencia;
+    final observacion = esErrorGeoref
+        ? observacionErrorGeorefParaSync(
+            obsTrim.isEmpty ? null : obsTrim,
+          )
+        : (obsTrim.isEmpty ? null : obsTrim);
     final foto = _fotoPath?.trim();
-    if (foto == null || foto.isEmpty) {
+    if (!esErrorGeoref && (foto == null || foto.isEmpty)) {
       setState(() {
         _validationError = _msgEvidenciaRequerida;
       });
@@ -613,10 +632,21 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
         fechaHoraVisita: ahora,
         distanciaMetros: metros,
         validacionEstado: validacion,
-        fotoPath: _fotoPath,
+        fotoPath: esErrorGeoref ? null : _fotoPath,
         syncStatus: SyncStatus.pendingSync,
         localActionId: actionId,
       );
+
+      if (esErrorGeoref &&
+          snap != null &&
+          widget.onGeorefDesdeIncidencia != null) {
+        await widget.onGeorefDesdeIncidencia!(
+          visita: widget.visita,
+          lat: snap.latitude,
+          lon: snap.longitude,
+          observacion: observacion,
+        );
+      }
 
       if (!widget.attemptRemoteSave) {
         if (mounted) Navigator.of(context).pop(paraEnviar);
@@ -639,6 +669,7 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final esErrorGeoref = _tipo == TipoIncidencia.errorGeorreferencia;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
@@ -692,82 +723,92 @@ class _IncidenciaSheetBodyState extends State<_IncidenciaSheetBody> {
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            'Evidencia (obligatoria)',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _busy || _pickingPhoto
-                      ? null
-                      : () => _pickFrom(ImageSource.camera),
-                  icon: _pickingPhoto
-                      ? SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: theme.colorScheme.primary,
-                          ),
-                        )
-                      : const Icon(Icons.photo_camera_outlined),
-                  label: const Text('Cámara'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 48),
+          if (esErrorGeoref) ...[
+            Text(
+              'Se capturará tu ubicación GPS actual como georreferencia operacional del cliente.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ] else ...[
+            Text(
+              'Evidencia (obligatoria)',
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy || _pickingPhoto
+                        ? null
+                        : () => _pickFrom(ImageSource.camera),
+                    icon: _pickingPhoto
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: theme.colorScheme.primary,
+                            ),
+                          )
+                        : const Icon(Icons.photo_camera_outlined),
+                    label: const Text('Cámara'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 48),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _busy || _pickingPhoto
+                        ? null
+                        : () => _pickFrom(ImageSource.gallery),
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: const Text('Galería'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 48),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (_fotoPath != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Vista previa',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: ColoredBox(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: Center(
+                    child: buildEvidenciaFotoPreview(
+                      _fotoPath!,
+                      maxHeight: 220,
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
                   onPressed: _busy || _pickingPhoto
                       ? null
-                      : () => _pickFrom(ImageSource.gallery),
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Galería'),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 48),
-                  ),
+                      : () => setState(() {
+                            _fotoPath = null;
+                            _validationError = null;
+                          }),
+                  child: const Text('Quitar foto'),
                 ),
               ),
             ],
-          ),
-          if (_fotoPath != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Vista previa',
-              style: theme.textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: ColoredBox(
-                color: theme.colorScheme.surfaceContainerHighest,
-                child: Center(
-                  child: buildEvidenciaFotoPreview(
-                    _fotoPath!,
-                    maxHeight: 220,
-                  ),
-                ),
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _busy || _pickingPhoto
-                    ? null
-                    : () => setState(() {
-                          _fotoPath = null;
-                          _validationError = null;
-                        }),
-                child: const Text('Quitar foto'),
-              ),
-            ),
           ],
           if (_tipo == TipoIncidencia.atencionTelefonica) ...[
             const SizedBox(height: 8),

@@ -19,6 +19,7 @@ class OperationalStatusSnapshot {
     required this.enlace,
     required this.gps,
     required this.pendientesCola,
+    this.pendientesColaTotal = 0,
     required this.visitasPendientes,
     this.visitasSyncPendientes,
     this.deadLetterCount = 0,
@@ -31,8 +32,10 @@ class OperationalStatusSnapshot {
 
   final OperacionalEnlaceEstado enlace;
   final OperacionalGpsEstado gps;
-  /// Ítems en SQLite outbox (heartbeat, gps, visita_sync).
+  /// Ítems en SQLite outbox con impacto operacional (visita_sync, georef_update).
   final int pendientesCola;
+  /// Total en outbox incluyendo telemetría secundaria (heartbeat, gps_track).
+  final int pendientesColaTotal;
   /// Visitas en memoria con `pending_sync` / error (puede incluir GET servidor).
   final int visitasPendientes;
   final int? visitasSyncPendientes;
