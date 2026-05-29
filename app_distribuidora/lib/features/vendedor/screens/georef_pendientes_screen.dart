@@ -33,6 +33,14 @@ class GeorefPendientesScreen extends StatefulWidget {
   State<GeorefPendientesScreen> createState() => _GeorefPendientesScreenState();
 }
 
+String? _ubicacionSecundaria(GeorefPendiente item) {
+  final comuna = item.comuna?.trim();
+  if (comuna != null && comuna.isNotEmpty) return comuna;
+  final ciudad = item.ciudad?.trim();
+  if (ciudad != null && ciudad.isNotEmpty) return ciudad;
+  return null;
+}
+
 class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
   List<GeorefPendiente> _items = [];
   bool _loading = true;
@@ -194,10 +202,9 @@ class _GeorefPendientesScreenState extends State<GeorefPendientesScreen> {
                               ),
                               const SizedBox(height: 6),
                               Text('📍 ${item.direccion}'),
-                              if (item.comuna != null &&
-                                  item.comuna!.isNotEmpty)
+                              if (_ubicacionSecundaria(item) != null)
                                 Text(
-                                  item.comuna!,
+                                  _ubicacionSecundaria(item)!,
                                   style: theme.textTheme.bodyMedium?.copyWith(
                                     color: theme.colorScheme.onSurfaceVariant,
                                   ),

@@ -1,14 +1,39 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/georef_pendiente.dart';
+import '../models/visita.dart';
 import '../utils/maps_navigation.dart';
 
-/// Regla ERP: pendiente si COALESCE(lat_operacional, lat) o lon es nulo/inválido.
+/// COALESCE(lat_operacional, lat) y COALESCE(lon_operacional, lon) válidos.
+bool coordenadasGeorefEfectivasValidas({
+  double? latOperacional,
+  double? lonOperacional,
+  double? latReplica,
+  double? lonReplica,
+  double? latEfectivaFallback,
+  double? lonEfectivaFallback,
+}) {
+  final lat = latOperacional ?? latReplica ?? latEfectivaFallback;
+  final lon = lonOperacional ?? lonReplica ?? lonEfectivaFallback;
+  if (lat == null || lon == null) return false;
+  return visitaTieneCoordenadasCliente(lat, lon);
+}
+
+/// Regla ERP: pendiente si falta COALESCE operacional / réplica (o fallback ruta).
 bool georefPendienteRequiereCaptura(GeorefPendiente item) {
-  final lat = item.latOperacional ?? item.latReplica;
-  final lon = item.lonOperacional ?? item.lonReplica;
-  if (lat == null || lon == null) return true;
-  return !visitaTieneCoordenadasCliente(lat, lon);
+  return !coordenadasGeorefEfectivasValidas(
+    latOperacional: item.latOperacional,
+    lonOperacional: item.lonOperacional,
+    latReplica: item.latReplica,
+    lonReplica: item.lonReplica,
+    latEfectivaFallback: item.latEfectiva,
+    lonEfectivaFallback: item.lonEfectiva,
+  );
+}
+
+/// Misma regla que listado georef pendientes (ficha cliente / ruta).
+bool visitaRequiereGeorefCaptura(Visita visita) {
+  return georefPendienteRequiereCaptura(GeorefPendiente.fromVisita(visita));
 }
 
 /// Lista filtrada y sin duplicados (misma regla que KPI y pantalla pendientes).

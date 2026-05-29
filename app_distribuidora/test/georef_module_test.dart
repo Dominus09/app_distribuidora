@@ -109,6 +109,32 @@ void main() {
     });
   });
 
+  group('visitaRequiereGeorefCaptura', () {
+    test('visita con coordenadas en ruta no requiere captura', () {
+      final visita = Visita.fromJson({
+        'id': '1',
+        'cliente_nombre': 'Cliente',
+        'direccion': 'Dir',
+        'orden_ruta': 1,
+        'estado': 'pendiente',
+        'lat': -33.45,
+        'lon': -70.66,
+      });
+      expect(visitaRequiereGeorefCaptura(visita), isFalse);
+    });
+
+    test('visita sin coordenadas sí requiere captura', () {
+      final visita = Visita.fromJson({
+        'id': '2',
+        'cliente_nombre': 'Cliente',
+        'direccion': 'Dir',
+        'orden_ruta': 2,
+        'estado': 'pendiente',
+      });
+      expect(visitaRequiereGeorefCaptura(visita), isTrue);
+    });
+  });
+
   group('filtrarGeorefPendientesEfectivos', () {
     test('excluye cliente con lat/lon BSALE (réplica) sin operacional', () {
       final items = [

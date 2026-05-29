@@ -294,19 +294,14 @@ class VisitaCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
             child: Column(
               children: [
-                if (visita.tieneTelefonoLlamable ||
-                    visitaTieneCoordenadasCliente(
-                      visita.latCliente,
-                      visita.lonCliente,
-                    )) ...[
-                Row(
-                  children: [
-                    if (visita.tieneTelefonoLlamable)
+                if (visita.tieneTelefonoLlamable) ...[
+                  Row(
+                    children: [
                       Expanded(
                         child: FilledButton.tonalIcon(
                           onPressed: () => launchPhoneDialer(visita.telefono!),
                           icon: const Icon(Icons.phone_outlined, size: 20),
-                          label: const Text('Llamar'),
+                          label: const Text('📞 Llamar'),
                           style: FilledButton.styleFrom(
                             minimumSize: const Size(0, 46),
                             textStyle: const TextStyle(
@@ -316,61 +311,50 @@ class VisitaCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                    if (visita.tieneTelefonoLlamable &&
-                        visitaTieneCoordenadasCliente(
-                          visita.latCliente,
-                          visita.lonCliente,
-                        ))
-                      const SizedBox(width: 8),
-                    if (visitaTieneCoordenadasCliente(
-                      visita.latCliente,
-                      visita.lonCliente,
-                    ))
-                      Expanded(
-                        child: FilledButton.tonalIcon(
-                          onPressed: onMapFocus,
-                          icon: const Icon(Icons.map_outlined, size: 20),
-                          label: const Text('Ver mapa'),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 46),
-                            backgroundColor: AppColors.secondaryBlue
-                                .withValues(alpha: 0.14),
-                            foregroundColor: AppColors.secondaryBlue,
-                            textStyle: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14,
+                      if (visitaTieneCoordenadasCliente(
+                        visita.latCliente,
+                        visita.lonCliente,
+                      )) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: onMapFocus,
+                            icon: const Icon(Icons.map_outlined, size: 20),
+                            label: const Text('🗺 Ver mapa'),
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(0, 46),
+                              backgroundColor: AppColors.secondaryBlue
+                                  .withValues(alpha: 0.14),
+                              foregroundColor: AppColors.secondaryBlue,
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    if (visita.tieneTelefonoLlamable ||
-                        visitaTieneCoordenadasCliente(
-                          visita.latCliente,
-                          visita.lonCliente,
-                        ))
-                      const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: visitaTieneCoordenadasCliente(
-                          visita.latCliente,
-                          visita.lonCliente,
-                        )
-                            ? () => _openDirections(context)
-                            : null,
-                        icon: const Icon(Icons.directions_outlined, size: 20),
-                        label: const Text('Ir'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size(0, 46),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 14,
-                          ),
-                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (visitaTieneCoordenadasCliente(
+                  visita.latCliente,
+                  visita.lonCliente,
+                )) ...[
+                  OutlinedButton.icon(
+                    onPressed: () => _openDirections(context),
+                    icon: const Icon(Icons.directions_outlined, size: 20),
+                    label: const Text('➡️ Ir'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 44),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                  ),
+                  const SizedBox(height: 8),
                 ],
                 Row(
                   children: [

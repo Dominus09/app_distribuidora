@@ -37,21 +37,21 @@ class TerrenoEnlaceChip extends StatelessWidget {
       color = const Color(0xFF2E7D32);
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: Chip(
-        visualDensity: VisualDensity.compact,
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        label: Text(
-          label,
-          style: theme.textTheme.labelMedium?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: color,
-          ),
+    final texto = switch (label) {
+      'Sin conexión' => '🔴 Sin conexión',
+      'Sincronizando' => '🟡 Sincronizando',
+      _ => '🟢 En línea',
+    };
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        texto,
+        style: theme.textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: color,
+          height: 1.2,
         ),
-        side: BorderSide(color: color.withValues(alpha: 0.45)),
-        backgroundColor: color.withValues(alpha: 0.1),
       ),
     );
   }

@@ -623,12 +623,35 @@ String? _parseTelefono(Map<String, dynamic> json) {
     'telefono',
     'teléfono',
     'telefono_cliente',
+    'telefono_contacto',
     'celular',
+    'movil',
+    'móvil',
     'phone',
     'fono',
+    'fono_cliente',
   ]) {
     final s = _str(json, key);
     if (s != null && s.isNotEmpty) return s;
+  }
+  for (final nested in ['cliente', 'datos_cliente', 'contacto']) {
+    final raw = json[nested];
+    if (raw is Map) {
+      final m = Map<String, dynamic>.from(raw);
+      for (final key in [
+        'telefono',
+        'teléfono',
+        'telefono_cliente',
+        'celular',
+        'movil',
+        'móvil',
+        'phone',
+        'fono',
+      ]) {
+        final s = _str(m, key);
+        if (s != null && s.isNotEmpty) return s;
+      }
+    }
   }
   return null;
 }

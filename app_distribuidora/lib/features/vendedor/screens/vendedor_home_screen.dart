@@ -1132,20 +1132,6 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
         ),
         title: const Text('Inicio'),
         actions: [
-          TerrenoEnlaceChip(
-            canSyncWithServer: _attemptRemoteSave,
-            interfaceConnectivityDetected: _connectivityOk,
-            anyItemSyncing: _visitas.any(
-              (v) => v.syncStatus == SyncStatus.syncing,
-            ),
-            batchSyncing: _syncBusy,
-          ),
-          if (kDebugMode)
-            IconButton(
-              icon: const Icon(Icons.bug_report_outlined),
-              tooltip: 'Debug outbox',
-              onPressed: _abrirOutboxDebug,
-            ),
           TextButton(
             onPressed: _cerrarSesion,
             child: const Text('Cerrar sesión'),
@@ -1227,6 +1213,15 @@ class _VendedorHomeScreenState extends State<VendedorHomeScreen>
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
+                ),
+                const SizedBox(height: 6),
+                TerrenoEnlaceChip(
+                  canSyncWithServer: _attemptRemoteSave,
+                  interfaceConnectivityDetected: _connectivityOk,
+                  anyItemSyncing: _visitas.any(
+                    (v) => v.syncStatus == SyncStatus.syncing,
+                  ),
+                  batchSyncing: _syncBusy,
                 ),
                 if (_mostrarRecordatorioGeoref) ...[
                   const SizedBox(height: 10),

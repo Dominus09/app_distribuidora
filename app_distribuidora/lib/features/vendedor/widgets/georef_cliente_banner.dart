@@ -35,8 +35,7 @@ class GeorefClienteBanner extends StatelessWidget {
   final bool attemptRemoteSave;
   final ValueChanged<Visita>? onGeorefGuardada;
 
-  bool get _sinGeoref =>
-      georefPendienteRequiereCaptura(GeorefPendiente.fromVisita(visita));
+  bool get _sinGeoref => visitaRequiereGeorefCaptura(visita);
 
   @override
   Widget build(BuildContext context) {
